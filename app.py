@@ -3,7 +3,7 @@ import yt_dlp
 import datetime
 from itertools import groupby
 
-# --- PAGE CONFIG (Must be first) ---
+# --- PAGE CONFIG ---
 st.set_page_config(page_title="Executive Tracker", page_icon="📊", layout="wide")
 
 # --- CONFIGURATION ---
@@ -49,9 +49,11 @@ CATEGORIES = {
 st.markdown("""
 <style>
     div[data-testid="stVerticalBlock"] > div { margin-bottom: -15px; }
-    hr { margin-top: 5px; margin-bottom: 5px; }
+    hr { margin-top: 10px; margin-bottom: 10px; border-color: #eee; }
     div[data-testid="column"] { display: flex; align-items: center; }
     .stExpander { border: 1px solid #ddd; border-radius: 5px; margin-bottom: 10px; }
+    /* Fix for the first row spacing */
+    .block-container { padding-top: 1rem; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -61,10 +63,9 @@ def get_channel_data(category_name):
     channels = CATEGORIES[category_name]
     all_videos = []
     
-    # FAST SCAN SETTINGS
     ydl_opts = {
         'extract_flat': True,         
-        'playlist_items': '1-7',      # <--- UPDATED TO 7 VIDEOS
+        'playlist_items': '1-7',      
         'lazy_playlist': True,
         'quiet': True,
         'no_warnings': True,
@@ -80,7 +81,6 @@ def get_channel_data(category_name):
             try:
                 info = ydl.extract_info(clean_url, download=False)
                 entries = info.get('entries', [])
-                # Use Channel Name if found, otherwise use URL name
                 channel_title = info.get('channel', clean_url.split('@')[-1])
 
                 for v in entries:
@@ -88,6 +88,7 @@ def get_channel_data(category_name):
                         vid_id = v.get('id')
                         all_videos.append({
                             'channel': channel_title,
+                            'channel_url': channel_url, # Storing this so we can link to it later!
                             'title': v.get('title'),
                             'url': f"https://www.youtube.com/watch?v={vid_id}",
                             'views': v.get('view_count'),
@@ -145,24 +146,35 @@ with st.spinner(f"Fetching last 7 videos for all channels..."):
 if not videos:
     st.error("No videos found.")
 else:
-    # 1. Sort by Channel Name so we can group them
+    # 1. Sort by Channel Name
     videos.sort(key=lambda x: x['channel'])
 
-    # 2. Group videos by Channel
-    for channel_name, channel_videos in groupby(videos, key=lambda x: x['channel']):
+    # 2. Group by Channel
+    for channel_name, channel_videos_iter in groupby(videos, key=lambda x: x['channel']):
         
-        # Create a Dropdown (Expander) for each Channel
+        # Convert iterator to list so we can use it multiple times
+        channel_videos = list(channel_videos_iter)
+        
+        # Get the URL from the first video
+        c_url = channel_videos[0]['channel_url'] if channel_videos else "#"
+
         with st.expander(f"**{channel_name}**", expanded=False):
             
-            # Header for the table inside the expander
-            h1, h2, h3, h4, h5 = st.columns([5, 1.5, 0.8, 1, 0.5])
-            h1.caption("Video Title")
-            h2.caption("Uploaded")
-            h3.caption("Views")
-            h4.caption("Length")
-            h5.caption("AI")
+            # --- CHANNEL LINK (Top of Expander) ---
+            st.markdown(f"🔗 [**Go to {channel_name} Channel Page**]({c_url})")
             
-            # List the 7 videos
+            # --- HEADERS ---
+            h1, h2, h3, h4, h5 = st.columns([5, 1.5, 0.8, 1, 0.5])
+            h1.caption("**Video Title**")
+            h2.caption("**Uploaded**")
+            h3.caption("**Views**")
+            h4.caption("**Length**")
+            h5.caption("**AI**")
+            
+            # --- SPACER (The Fix for overlap) ---
+            st.divider() 
+            
+            # --- VIDEO LIST ---
             for v in channel_videos:
                 c1, c2, c3, c4, c5 = st.columns([5, 1.5, 0.8, 1, 0.5])
                 
@@ -176,4 +188,5 @@ else:
                         st.code(f"Resuma este vídeo em português: {v['url']}", language="text")
                         st.link_button("Gemini", GEM_URL)
                 
-                st.divider()
+                # Small invisible separator between rows
+                st.markdown("<div style='margin-bottom: 5px;'></div>", unsafe_allow_html=True)
