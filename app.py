@@ -6,6 +6,36 @@ from itertools import groupby
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Executive Tracker", page_icon="📊", layout="wide")
 
+# --- CSS STYLING (Visual Fixes) ---
+st.markdown("""
+<style>
+    /* 1. Fix Title Cutoff: Push the main content down */
+    .block-container {
+        padding-top: 3rem; 
+        padding-bottom: 5rem;
+    }
+    
+    /* 2. Styling the Expanders (Channels) */
+    .stExpander {
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        background-color: #ffffff;
+        margin-bottom: 15px; /* Space between channels */
+    }
+    
+    /* 3. Text Alignment */
+    div[data-testid="column"] {
+        display: flex;
+        align-items: center; /* Vertically center all text */
+    }
+    
+    /* 4. Remove default Streamlit whitespace between elements */
+    div[data-testid="stVerticalBlock"] > div {
+        margin-bottom: -5px;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 # --- CONFIGURATION ---
 GEM_URL = "https://gemini.google.com/app" 
 
@@ -45,31 +75,21 @@ CATEGORIES = {
     ]
 }
 
-# --- CSS STYLING ---
-st.markdown("""
-<style>
-    div[data-testid="stVerticalBlock"] > div { margin-bottom: -15px; }
-    hr { margin-top: 10px; margin-bottom: 10px; border-color: #eee; }
-    div[data-testid="column"] { display: flex; align-items: center; }
-    .stExpander { border: 1px solid #ddd; border-radius: 5px; margin-bottom: 10px; }
-    /* Fix for the first row spacing */
-    .block-container { padding-top: 1rem; }
-</style>
-""", unsafe_allow_html=True)
-
-# --- DATA FUNCTIONS ---
+# --- DATA ENGINE ---
 @st.cache_data(ttl=3600)
 def get_channel_data(category_name):
     channels = CATEGORIES[category_name]
     all_videos = []
     
+    # ACCURATE MODE (Fixes the missing dates)
     ydl_opts = {
-        'extract_flat': True,         
         'playlist_items': '1-7',      
         'lazy_playlist': True,
         'quiet': True,
         'no_warnings': True,
         'ignoreerrors': True,
+        'skip_download': True,        # Don't download video file
+        'ignore_no_formats': True,    # Speed up metadata check
     }
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -88,12 +108,12 @@ def get_channel_data(category_name):
                         vid_id = v.get('id')
                         all_videos.append({
                             'channel': channel_title,
-                            'channel_url': channel_url, # Storing this so we can link to it later!
+                            'channel_url': channel_url,
                             'title': v.get('title'),
                             'url': f"https://www.youtube.com/watch?v={vid_id}",
                             'views': v.get('view_count'),
                             'duration': v.get('duration'),
-                            'date': v.get('upload_date'),
+                            'date': v.get('upload_date'), # This will now work!
                             'timestamp': v.get('timestamp')
                         })
             except:
@@ -101,8 +121,9 @@ def get_channel_data(category_name):
     
     return all_videos
 
+# --- FORMATTING ---
 def format_relative_time(date_str):
-    if not date_str: return "-"
+    if not date_str: return "Unknown"
     try:
         date_obj = datetime.datetime.strptime(date_str, '%Y%m%d').date()
         today = datetime.date.today()
@@ -114,7 +135,7 @@ def format_relative_time(date_str):
         if delta < 365: return f"{delta // 30} months ago"
         return f"{delta // 365} years ago"
     except:
-        return "-"
+        return "Unknown"
 
 def format_views(views):
     if not views: return "-"
@@ -132,61 +153,61 @@ def format_duration(seconds):
 # --- SIDEBAR ---
 with st.sidebar:
     st.title("📊 Menu")
-    selected_category = st.radio("Category:", list(CATEGORIES.keys()))
-    if st.button("🔄 Refresh"):
+    selected_category = st.radio("Select Category:", list(CATEGORIES.keys()))
+    if st.button("🔄 Refresh Data"):
         st.cache_data.clear()
         st.rerun()
 
 # --- MAIN CONTENT ---
 st.title(f"📺 {selected_category}")
 
-with st.spinner(f"Fetching last 7 videos for all channels..."):
+with st.spinner(f"Updating Intelligence for {selected_category}..."):
     videos = get_channel_data(selected_category)
 
 if not videos:
-    st.error("No videos found.")
+    st.error("No videos found. Please check internet connection.")
 else:
-    # 1. Sort by Channel Name
     videos.sort(key=lambda x: x['channel'])
 
-    # 2. Group by Channel
     for channel_name, channel_videos_iter in groupby(videos, key=lambda x: x['channel']):
-        
-        # Convert iterator to list so we can use it multiple times
         channel_videos = list(channel_videos_iter)
-        
-        # Get the URL from the first video
         c_url = channel_videos[0]['channel_url'] if channel_videos else "#"
 
         with st.expander(f"**{channel_name}**", expanded=False):
             
-            # --- CHANNEL LINK (Top of Expander) ---
-            st.markdown(f"🔗 [**Go to {channel_name} Channel Page**]({c_url})")
+            # Link to Channel
+            st.markdown(f"🔗 [**Open {channel_name} Channel**]({c_url})")
             
-            # --- HEADERS ---
+            # Column Headers
             h1, h2, h3, h4, h5 = st.columns([5, 1.5, 0.8, 1, 0.5])
-            h1.caption("**Video Title**")
-            h2.caption("**Uploaded**")
-            h3.caption("**Views**")
-            h4.caption("**Length**")
-            h5.caption("**AI**")
+            h1.markdown("<small style='color:grey'>VIDEO TITLE</small>", unsafe_allow_html=True)
+            h2.markdown("<small style='color:grey'>UPLOADED</small>", unsafe_allow_html=True)
+            h3.markdown("<small style='color:grey'>VIEWS</small>", unsafe_allow_html=True)
+            h4.markdown("<small style='color:grey'>LENGTH</small>", unsafe_allow_html=True)
+            h5.markdown("<small style='color:grey'>AI</small>", unsafe_allow_html=True)
             
-            # --- SPACER (The Fix for overlap) ---
-            st.divider() 
-            
-            # --- VIDEO LIST ---
-            for v in channel_videos:
+            st.divider()
+
+            # Video Rows
+            for i, v in enumerate(channel_videos):
                 c1, c2, c3, c4, c5 = st.columns([5, 1.5, 0.8, 1, 0.5])
                 
+                # Title
                 c1.markdown(f"[{v['title']}]({v['url']})", unsafe_allow_html=True)
+                
+                # Metadata
                 c2.write(format_relative_time(v['date']))
                 c3.write(format_views(v['views']))
                 c4.write(format_duration(v['duration']))
                 
+                # Button
                 with c5:
                     with st.popover("✨"):
                         st.code(f"Resuma este vídeo em português: {v['url']}", language="text")
                         st.link_button("Gemini", GEM_URL)
                 
-                # Small invisible separator between rows
-                st.markdown("<div style='margin-bottom: 5px;'></div>", unsafe_allow_html=True)
+                # SPACER: Use a Divider if it's not the last video, otherwise just space
+                if i < len(channel_videos) - 1:
+                     st.markdown("<hr style='margin: 5px 0; opacity: 0.3;'>", unsafe_allow_html=True)
+                else:
+                     st.markdown("<div style='margin-bottom: 10px;'></div>", unsafe_allow_html=True)
