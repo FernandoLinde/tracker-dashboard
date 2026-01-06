@@ -188,7 +188,6 @@ else:
                         st.code(v['url'], language="text") # This creates a one-click copy button
                         st.divider()
                         st.caption("Summarize:")
-                        st.code(f"Resuma este vídeo em português: {v['url']}", language="text")
                         st.link_button("Go to Gemini 💎", GEM_URL)
                 
                 # SPACER
@@ -196,3 +195,4 @@ else:
                      st.markdown("<hr style='margin: 5px 0; opacity: 0.3;'>", unsafe_allow_html=True)
                 else:
                      st.markdown("<div style='margin-bottom: 10px;'></div>", unsafe_allow_html=True)
+
