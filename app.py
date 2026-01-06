@@ -6,7 +6,7 @@ import datetime
 st.set_page_config(page_title="Executive Tracker", page_icon="📊", layout="wide")
 
 # --- CONFIGURATION ---
-GEM_URL = "https://gemini.google.com/gem/1HTDzIGbVXIA7dJodfgK3jahP3sayuWWl?usp=sharing" 
+GEM_URL = "https://gemini.google.com/app" 
 
 CATEGORIES = {
     "Tech": [
@@ -44,14 +44,11 @@ CATEGORIES = {
     ]
 }
 
-# --- CUSTOM CSS FOR COMPACT ROWS ---
+# --- CUSTOM CSS ---
 st.markdown("""
 <style>
-    /* Reduce padding between rows */
     div[data-testid="stVerticalBlock"] > div { margin-bottom: -15px; }
-    /* Make the divider line thinner */
     hr { margin-top: 5px; margin-bottom: 5px; }
-    /* Vertically align text in columns */
     div[data-testid="column"] { display: flex; align-items: center; }
 </style>
 """, unsafe_allow_html=True)
@@ -102,19 +99,17 @@ def get_channel_data(category_name):
 
 def format_views(views):
     if not views: return "-"
-    # Convert to K or M for compactness (e.g., 1.2M, 400K)
-    if views >= 1_000_000:
-        return f"{views/1_000_000:.1f}M"
-    if views >= 1_000:
-        return f"{views/1_000:.0f}K"
+    if views >= 1_000_000: return f"{views/1_000_000:.1f}M"
+    if views >= 1_000: return f"{views/1_000:.0f}K"
     return str(views)
 
 def format_date(date_str):
-    if not date_str: return "-"
+    if not date_str: return "Recent" # Fallback if date is missing
     try:
-        return datetime.datetime.strptime(date_str, '%Y%m%d').strftime('%d/%m')
+        # Try to parse YYYYMMDD
+        return datetime.datetime.strptime(date_str, '%Y%m%d').strftime('%d/%m/%y')
     except:
-        return date_str
+        return date_str # Return raw text if parsing fails
 
 def format_duration(seconds):
     if not seconds: return "-"
@@ -140,10 +135,9 @@ with st.spinner(f"Loading..."):
 if not videos:
     st.error("No videos found.")
 else:
-    # --- HEADER ROW ---
-    # Adjust these numbers to change column widths
-    # [Channel(2), Title(5), Date(1), Views(1), Length(1), Summary(0.5)]
-    cols = st.columns([2, 5, 1, 1, 1, 0.5])
+    # UPDATED COLUMN WIDTHS: Gave 'Date' (col3) more space (1.2)
+    # [Channel(2), Title(4.5), Date(1.2), Views(0.8), Length(1), AI(0.5)]
+    cols = st.columns([2, 4.5, 1.2, 0.8, 1, 0.5])
     cols[0].markdown("**Channel**")
     cols[1].markdown("**Video Title**")
     cols[2].markdown("**Date**")
@@ -151,22 +145,21 @@ else:
     cols[4].markdown("**Length**")
     cols[5].markdown("**AI**")
     
-    st.markdown("---") # Divider line
+    st.markdown("---") 
 
-    # --- DATA ROWS ---
     for video in videos:
-        c1, c2, c3, c4, c5, c6 = st.columns([2, 5, 1, 1, 1, 0.5])
+        # Match the column widths exactly
+        c1, c2, c3, c4, c5, c6 = st.columns([2, 4.5, 1.2, 0.8, 1, 0.5])
         
         c1.write(video['channel'])
         c2.markdown(f"[{video['title']}]({video['url']})", unsafe_allow_html=True)
-        c3.write(format_date(video['date']))
+        c3.write(format_date(video['date'])) # This now has a fallback
         c4.write(format_views(video['views']))
         c5.write(format_duration(video['duration']))
         
-        # Tiny AI Button
         with c6:
             with st.popover("✨"):
                 st.code(f"Resuma este vídeo em português: {video['url']}", language="text")
                 st.link_button("Gemini", GEM_URL)
         
-        st.divider() # Thin line between rows
+        st.divider()
