@@ -2,7 +2,7 @@ import streamlit as st
 import yt_dlp
 import datetime
 
-# --- PAGE CONFIG (Must be first) ---
+# --- PAGE CONFIG ---
 st.set_page_config(page_title="Executive Tracker", page_icon="📊", layout="wide")
 
 # --- CONFIGURATION ---
@@ -44,7 +44,7 @@ CATEGORIES = {
     ]
 }
 
-# --- CUSTOM CSS ---
+# --- CSS STYLING ---
 st.markdown("""
 <style>
     div[data-testid="stVerticalBlock"] > div { margin-bottom: -15px; }
@@ -59,13 +59,15 @@ def get_channel_data(category_name):
     channels = CATEGORIES[category_name]
     all_videos = []
     
+    # DEEP SCAN SETTINGS (Slower but accurate)
     ydl_opts = {
-        'extract_flat': True,
-        'playlist_items': '1-5', 
+        'playlist_items': '1-5',      
         'lazy_playlist': True,
         'quiet': True,
         'no_warnings': True,
         'ignoreerrors': True,
+        'skip_download': True,        # Don't download video
+        'ignore_no_formats': True,    # Speed up
     }
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -75,8 +77,9 @@ def get_channel_data(category_name):
                 clean_url += '/videos'
             
             try:
+                # Deep scan extraction
                 info = ydl.extract_info(clean_url, download=False)
-                entries = info.get('entries', [])
+                entries = list(info.get('entries', []))
                 channel_title = info.get('channel', clean_url.split('@')[-1])
 
                 for v in entries:
@@ -97,19 +100,27 @@ def get_channel_data(category_name):
     all_videos.sort(key=lambda x: x.get('timestamp') or 0, reverse=True)
     return all_videos
 
+def format_relative_time(date_str):
+    """Converts YYYYMMDD to 'X days ago'"""
+    if not date_str: return "-"
+    try:
+        date_obj = datetime.datetime.strptime(date_str, '%Y%m%d').date()
+        today = datetime.date.today()
+        delta = (today - date_obj).days
+        
+        if delta == 0: return "Today"
+        if delta == 1: return "Yesterday"
+        if delta < 30: return f"{delta} days ago"
+        if delta < 365: return f"{delta // 30} months ago"
+        return f"{delta // 365} years ago"
+    except:
+        return "-"
+
 def format_views(views):
     if not views: return "-"
     if views >= 1_000_000: return f"{views/1_000_000:.1f}M"
     if views >= 1_000: return f"{views/1_000:.0f}K"
     return str(views)
-
-def format_date(date_str):
-    if not date_str: return "Recent" # Fallback if date is missing
-    try:
-        # Try to parse YYYYMMDD
-        return datetime.datetime.strptime(date_str, '%Y%m%d').strftime('%d/%m/%y')
-    except:
-        return date_str # Return raw text if parsing fails
 
 def format_duration(seconds):
     if not seconds: return "-"
@@ -129,18 +140,18 @@ with st.sidebar:
 # --- MAIN CONTENT ---
 st.title(f"📺 {selected_category}")
 
-with st.spinner(f"Loading..."):
+with st.spinner(f"Fetching latest {selected_category} intel (Deep Scan)..."):
     videos = get_channel_data(selected_category)
 
 if not videos:
     st.error("No videos found.")
 else:
-    # UPDATED COLUMN WIDTHS: Gave 'Date' (col3) more space (1.2)
-    # [Channel(2), Title(4.5), Date(1.2), Views(0.8), Length(1), AI(0.5)]
-    cols = st.columns([2, 4.5, 1.2, 0.8, 1, 0.5])
+    # UPDATED COLUMN LAYOUT
+    # [Channel(2), Title(4.5), Time(1.5), Views(0.8), Length(1), AI(0.5)]
+    cols = st.columns([2, 4.5, 1.5, 0.8, 1, 0.5])
     cols[0].markdown("**Channel**")
     cols[1].markdown("**Video Title**")
-    cols[2].markdown("**Date**")
+    cols[2].markdown("**Uploaded**") # Changed Header
     cols[3].markdown("**Views**")
     cols[4].markdown("**Length**")
     cols[5].markdown("**AI**")
@@ -148,12 +159,11 @@ else:
     st.markdown("---") 
 
     for video in videos:
-        # Match the column widths exactly
-        c1, c2, c3, c4, c5, c6 = st.columns([2, 4.5, 1.2, 0.8, 1, 0.5])
+        c1, c2, c3, c4, c5, c6 = st.columns([2, 4.5, 1.5, 0.8, 1, 0.5])
         
         c1.write(video['channel'])
         c2.markdown(f"[{video['title']}]({video['url']})", unsafe_allow_html=True)
-        c3.write(format_date(video['date'])) # This now has a fallback
+        c3.write(format_relative_time(video['date'])) # Using new function
         c4.write(format_views(video['views']))
         c5.write(format_duration(video['duration']))
         
