@@ -1,8 +1,9 @@
 import streamlit as st
 import yt_dlp
 import datetime
+from itertools import groupby
 
-# --- PAGE CONFIG ---
+# --- PAGE CONFIG (Must be first) ---
 st.set_page_config(page_title="Executive Tracker", page_icon="📊", layout="wide")
 
 # --- CONFIGURATION ---
@@ -50,6 +51,7 @@ st.markdown("""
     div[data-testid="stVerticalBlock"] > div { margin-bottom: -15px; }
     hr { margin-top: 5px; margin-bottom: 5px; }
     div[data-testid="column"] { display: flex; align-items: center; }
+    .stExpander { border: 1px solid #ddd; border-radius: 5px; margin-bottom: 10px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -61,8 +63,8 @@ def get_channel_data(category_name):
     
     # FAST SCAN SETTINGS
     ydl_opts = {
-        'extract_flat': True,         # <--- FAST MODE ON
-        'playlist_items': '1-5', 
+        'extract_flat': True,         
+        'playlist_items': '1-7',      # <--- UPDATED TO 7 VIDEOS
         'lazy_playlist': True,
         'quiet': True,
         'no_warnings': True,
@@ -78,6 +80,7 @@ def get_channel_data(category_name):
             try:
                 info = ydl.extract_info(clean_url, download=False)
                 entries = info.get('entries', [])
+                # Use Channel Name if found, otherwise use URL name
                 channel_title = info.get('channel', clean_url.split('@')[-1])
 
                 for v in entries:
@@ -89,17 +92,15 @@ def get_channel_data(category_name):
                             'url': f"https://www.youtube.com/watch?v={vid_id}",
                             'views': v.get('view_count'),
                             'duration': v.get('duration'),
-                            'date': v.get('upload_date'), # Might be None in Fast Mode
+                            'date': v.get('upload_date'),
                             'timestamp': v.get('timestamp')
                         })
             except:
                 continue
-                
-    all_videos.sort(key=lambda x: x.get('timestamp') or 0, reverse=True)
+    
     return all_videos
 
 def format_relative_time(date_str):
-    """Converts YYYYMMDD to 'X days ago'"""
     if not date_str: return "-"
     try:
         date_obj = datetime.datetime.strptime(date_str, '%Y%m%d').date()
@@ -138,35 +139,41 @@ with st.sidebar:
 # --- MAIN CONTENT ---
 st.title(f"📺 {selected_category}")
 
-with st.spinner(f"Fetching latest {selected_category} intel (Fast Mode)..."):
+with st.spinner(f"Fetching last 7 videos for all channels..."):
     videos = get_channel_data(selected_category)
 
 if not videos:
     st.error("No videos found.")
 else:
-    # COLUMN LAYOUT
-    cols = st.columns([2, 4.5, 1.5, 0.8, 1, 0.5])
-    cols[0].markdown("**Channel**")
-    cols[1].markdown("**Video Title**")
-    cols[2].markdown("**Uploaded**")
-    cols[3].markdown("**Views**")
-    cols[4].markdown("**Length**")
-    cols[5].markdown("**AI**")
-    
-    st.markdown("---") 
+    # 1. Sort by Channel Name so we can group them
+    videos.sort(key=lambda x: x['channel'])
 
-    for video in videos:
-        c1, c2, c3, c4, c5, c6 = st.columns([2, 4.5, 1.5, 0.8, 1, 0.5])
+    # 2. Group videos by Channel
+    for channel_name, channel_videos in groupby(videos, key=lambda x: x['channel']):
         
-        c1.write(video['channel'])
-        c2.markdown(f"[{video['title']}]({video['url']})", unsafe_allow_html=True)
-        c3.write(format_relative_time(video['date'])) # Will calculate if data exists
-        c4.write(format_views(video['views']))
-        c5.write(format_duration(video['duration']))
-        
-        with c6:
-            with st.popover("✨"):
-                st.code(f"Resuma este vídeo em português: {video['url']}", language="text")
-                st.link_button("Gemini", GEM_URL)
-        
-        st.divider()
+        # Create a Dropdown (Expander) for each Channel
+        with st.expander(f"**{channel_name}**", expanded=False):
+            
+            # Header for the table inside the expander
+            h1, h2, h3, h4, h5 = st.columns([5, 1.5, 0.8, 1, 0.5])
+            h1.caption("Video Title")
+            h2.caption("Uploaded")
+            h3.caption("Views")
+            h4.caption("Length")
+            h5.caption("AI")
+            
+            # List the 7 videos
+            for v in channel_videos:
+                c1, c2, c3, c4, c5 = st.columns([5, 1.5, 0.8, 1, 0.5])
+                
+                c1.markdown(f"[{v['title']}]({v['url']})", unsafe_allow_html=True)
+                c2.write(format_relative_time(v['date']))
+                c3.write(format_views(v['views']))
+                c4.write(format_duration(v['duration']))
+                
+                with c5:
+                    with st.popover("✨"):
+                        st.code(f"Resuma este vídeo em português: {v['url']}", language="text")
+                        st.link_button("Gemini", GEM_URL)
+                
+                st.divider()
