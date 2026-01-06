@@ -183,10 +183,9 @@ else:
                 
                 # Copy Link & Gemini
                 with c5:
-                    with st.popover("⚙️"):
+                    with st.popover("✨"):
                         st.caption("Copy Link:")
                         st.code(v['url'], language="text") # This creates a one-click copy button
-                        st.divider()
                         st.caption("Summarize:")
                         st.link_button("Go to Gemini 💎", GEM_URL)
                 
@@ -195,4 +194,5 @@ else:
                      st.markdown("<hr style='margin: 5px 0; opacity: 0.3;'>", unsafe_allow_html=True)
                 else:
                      st.markdown("<div style='margin-bottom: 10px;'></div>", unsafe_allow_html=True)
+
 
