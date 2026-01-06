@@ -59,15 +59,14 @@ def get_channel_data(category_name):
     channels = CATEGORIES[category_name]
     all_videos = []
     
-    # DEEP SCAN SETTINGS (Slower but accurate)
+    # FAST SCAN SETTINGS
     ydl_opts = {
-        'playlist_items': '1-5',      
+        'extract_flat': True,         # <--- FAST MODE ON
+        'playlist_items': '1-5', 
         'lazy_playlist': True,
         'quiet': True,
         'no_warnings': True,
         'ignoreerrors': True,
-        'skip_download': True,        # Don't download video
-        'ignore_no_formats': True,    # Speed up
     }
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -77,9 +76,8 @@ def get_channel_data(category_name):
                 clean_url += '/videos'
             
             try:
-                # Deep scan extraction
                 info = ydl.extract_info(clean_url, download=False)
-                entries = list(info.get('entries', []))
+                entries = info.get('entries', [])
                 channel_title = info.get('channel', clean_url.split('@')[-1])
 
                 for v in entries:
@@ -91,7 +89,7 @@ def get_channel_data(category_name):
                             'url': f"https://www.youtube.com/watch?v={vid_id}",
                             'views': v.get('view_count'),
                             'duration': v.get('duration'),
-                            'date': v.get('upload_date'),
+                            'date': v.get('upload_date'), # Might be None in Fast Mode
                             'timestamp': v.get('timestamp')
                         })
             except:
@@ -140,18 +138,17 @@ with st.sidebar:
 # --- MAIN CONTENT ---
 st.title(f"📺 {selected_category}")
 
-with st.spinner(f"Fetching latest {selected_category} intel (Deep Scan)..."):
+with st.spinner(f"Fetching latest {selected_category} intel (Fast Mode)..."):
     videos = get_channel_data(selected_category)
 
 if not videos:
     st.error("No videos found.")
 else:
-    # UPDATED COLUMN LAYOUT
-    # [Channel(2), Title(4.5), Time(1.5), Views(0.8), Length(1), AI(0.5)]
+    # COLUMN LAYOUT
     cols = st.columns([2, 4.5, 1.5, 0.8, 1, 0.5])
     cols[0].markdown("**Channel**")
     cols[1].markdown("**Video Title**")
-    cols[2].markdown("**Uploaded**") # Changed Header
+    cols[2].markdown("**Uploaded**")
     cols[3].markdown("**Views**")
     cols[4].markdown("**Length**")
     cols[5].markdown("**AI**")
@@ -163,7 +160,7 @@ else:
         
         c1.write(video['channel'])
         c2.markdown(f"[{video['title']}]({video['url']})", unsafe_allow_html=True)
-        c3.write(format_relative_time(video['date'])) # Using new function
+        c3.write(format_relative_time(video['date'])) # Will calculate if data exists
         c4.write(format_views(video['views']))
         c5.write(format_duration(video['duration']))
         
