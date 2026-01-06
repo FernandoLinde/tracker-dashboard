@@ -37,7 +37,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- CONFIGURATION ---
-GEM_URL = "https://gemini.google.com/app" 
+GEM_URL = "https://gemini.google.com/gem/1HTDzIGbVXIA7dJodfgK3jahP3sayuWWl?usp=sharing" 
 
 CATEGORIES = {
     "Tech": [
@@ -211,3 +211,4 @@ else:
                      st.markdown("<hr style='margin: 5px 0; opacity: 0.3;'>", unsafe_allow_html=True)
                 else:
                      st.markdown("<div style='margin-bottom: 10px;'></div>", unsafe_allow_html=True)
+
