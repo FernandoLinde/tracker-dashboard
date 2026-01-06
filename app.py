@@ -6,30 +6,33 @@ from itertools import groupby
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Executive Tracker", page_icon="📊", layout="wide")
 
-# --- CSS STYLING ---
+# --- CSS STYLING (Dark Mode & Visuals) ---
 st.markdown("""
 <style>
-    /* 1. Fix Title Cutoff */
+    /* 1. Force Dark Theme for Expanders */
+    .stExpander {
+        background-color: #0E1117 !important; /* Dark background */
+        border: 1px solid #303030 !important; /* Subtle border */
+        color: white !important;
+    }
+    
+    /* 2. Text Color Fix inside Expanders */
+    .streamlit-expanderHeader {
+        color: white !important;
+        background-color: #0E1117 !important;
+    }
+    
+    /* 3. General Layout Fixes */
     .block-container {
         padding-top: 3rem; 
         padding-bottom: 5rem;
     }
     
-    /* 2. Styling the Expanders */
-    .stExpander {
-        border: 1px solid #e0e0e0;
-        border-radius: 8px;
-        background-color: #ffffff;
-        margin-bottom: 15px; 
-    }
-    
-    /* 3. Text Alignment */
     div[data-testid="column"] {
         display: flex;
         align-items: center; 
     }
     
-    /* 4. Remove whitespace */
     div[data-testid="stVerticalBlock"] > div {
         margin-bottom: -5px;
     }
@@ -81,7 +84,6 @@ def get_channel_data(category_name):
     channels = CATEGORIES[category_name]
     all_videos = []
     
-    # FAST MODE: extract_flat=True
     ydl_opts = {
         'extract_flat': True,         
         'playlist_items': '1-7',      
@@ -112,7 +114,6 @@ def get_channel_data(category_name):
                             'url': f"https://www.youtube.com/watch?v={vid_id}",
                             'views': v.get('view_count'),
                             'duration': v.get('duration'),
-                            # Date removed since it doesn't work in fast mode
                             'timestamp': v.get('timestamp')
                         })
             except:
@@ -159,35 +160,36 @@ else:
 
         with st.expander(f"**{channel_name}**", expanded=False):
             
-            # Link to Channel
             st.markdown(f"🔗 [**Open {channel_name} Channel**]({c_url})")
             
-            # REMOVED "UPLOADED" COLUMN
-            # New Layout: [Title (6)] | [Views (1)] | [Length (1)] | [AI (0.5)]
-            h1, h3, h4, h5 = st.columns([6, 1, 1, 0.5])
+            # Layout: [Title (5)] | [Views (1)] | [Length (1)] | [Actions (1.5)]
+            h1, h3, h4, h5 = st.columns([5, 1, 1, 1.5])
             h1.markdown("<small style='color:grey'>VIDEO TITLE</small>", unsafe_allow_html=True)
             h3.markdown("<small style='color:grey'>VIEWS</small>", unsafe_allow_html=True)
             h4.markdown("<small style='color:grey'>LENGTH</small>", unsafe_allow_html=True)
-            h5.markdown("<small style='color:grey'>AI</small>", unsafe_allow_html=True)
+            h5.markdown("<small style='color:grey'>ACTIONS</small>", unsafe_allow_html=True)
             
             st.divider()
 
-            # Video Rows
             for i, v in enumerate(channel_videos):
-                c1, c3, c4, c5 = st.columns([6, 1, 1, 0.5])
+                c1, c3, c4, c5 = st.columns([5, 1, 1, 1.5])
                 
                 # Title
                 c1.markdown(f"[{v['title']}]({v['url']})", unsafe_allow_html=True)
                 
-                # Metrics (No Date)
+                # Metrics
                 c3.write(format_views(v['views']))
                 c4.write(format_duration(v['duration']))
                 
-                # Button
+                # Copy Link & Gemini
                 with c5:
-                    with st.popover("✨"):
+                    with st.popover("⚙️"):
+                        st.caption("Copy Link:")
+                        st.code(v['url'], language="text") # This creates a one-click copy button
+                        st.divider()
+                        st.caption("Summarize:")
                         st.code(f"Resuma este vídeo em português: {v['url']}", language="text")
-                        st.link_button("Gemini", GEM_URL)
+                        st.link_button("Go to Gemini 💎", GEM_URL)
                 
                 # SPACER
                 if i < len(channel_videos) - 1:
