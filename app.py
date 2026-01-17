@@ -2,47 +2,63 @@ import streamlit as st
 import yt_dlp
 import datetime
 from itertools import groupby
-
 from youtube_transcript_api import YouTubeTranscriptApi
 
+# --- HELPER FUNCTIONS ---
+
 def get_transcript(video_url):
+    """Fetches transcript on-demand with fallback logic for auto-generated captions."""
     try:
         video_id = video_url.split("v=")[-1]
-        transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['pt', 'en'])
-        return "\n".join([t['text'] for t in transcript_list])
+        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        
+        # Try to find Portuguese or English (Manual first, then Auto-generated)
+        try:
+            t = transcript_list.find_transcript(['pt', 'en'])
+        except:
+            t = transcript_list.find_generated_transcript(['pt', 'en'])
+            
+        full_text = "\n".join([item['text'] for item in t.fetch()])
+        return full_text
+    except Exception as e:
+        return None
+
+def format_views(views):
+    if not views: return "-"
+    if views >= 1_000_000: return f"{views/1_000_000:.1f}M"
+    if views >= 1_000: return f"{views/1_000:.0f}K"
+    return str(views)
+
+def format_duration(seconds):
+    if not seconds: return "-"
+    try:
+        return str(datetime.timedelta(seconds=int(seconds)))
     except:
-        return "Transcript not available."
+        return "-"
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Executive Tracker", page_icon="📊", layout="wide")
 
-# --- CSS STYLING (Dark Mode & Visuals) ---
+# --- CSS STYLING ---
 st.markdown("""
 <style>
-    /* 1. Force Dark Theme for Expanders */
     .stExpander {
-        background-color: #0E1117 !important; /* Dark background */
-        border: 1px solid #303030 !important; /* Subtle border */
+        background-color: #0E1117 !important;
+        border: 1px solid #303030 !important;
         color: white !important;
     }
-    
-    /* 2. Text Color Fix inside Expanders */
     .streamlit-expanderHeader {
         color: white !important;
         background-color: #0E1117 !important;
     }
-    
-    /* 3. General Layout Fixes */
     .block-container {
         padding-top: 3rem; 
         padding-bottom: 5rem;
     }
-    
     div[data-testid="column"] {
         display: flex;
         align-items: center; 
     }
-    
     div[data-testid="stVerticalBlock"] > div {
         margin-bottom: -5px;
     }
@@ -88,14 +104,14 @@ CATEGORIES = {
     ]
 }
 
-# --- DATA ENGINE (FAST MODE) ---
+# --- DATA ENGINE ---
 @st.cache_data(ttl=3600)
 def get_channel_data(category_name):
     channels = CATEGORIES[category_name]
     all_videos = []
     
     ydl_opts = {
-        'extract_flat': True,         
+        'extract_flat': True,          
         'playlist_items': '1-7',      
         'lazy_playlist': True,
         'quiet': True,
@@ -124,26 +140,11 @@ def get_channel_data(category_name):
                             'url': f"https://www.youtube.com/watch?v={vid_id}",
                             'views': v.get('view_count'),
                             'duration': v.get('duration'),
-                            'timestamp': v.get('timestamp')
+                            'id': vid_id
                         })
             except:
                 continue
-    
     return all_videos
-
-# --- FORMATTING ---
-def format_views(views):
-    if not views: return "-"
-    if views >= 1_000_000: return f"{views/1_000_000:.1f}M"
-    if views >= 1_000: return f"{views/1_000:.0f}K"
-    return str(views)
-
-def format_duration(seconds):
-    if not seconds: return "-"
-    try:
-        return str(datetime.timedelta(seconds=int(seconds)))
-    except:
-        return "-"
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -156,11 +157,11 @@ with st.sidebar:
 # --- MAIN CONTENT ---
 st.title(f"📺 {selected_category}")
 
-with st.spinner(f"Updating Intelligence for {selected_category} (Fast Mode)..."):
+with st.spinner(f"Updating Intelligence..."):
     videos = get_channel_data(selected_category)
 
 if not videos:
-    st.error("No videos found. Please check internet connection.")
+    st.error("No videos found. Check connection.")
 else:
     videos.sort(key=lambda x: x['channel'])
 
@@ -169,30 +170,29 @@ else:
         c_url = channel_videos[0]['channel_url'] if channel_videos else "#"
 
         with st.expander(f"**{channel_name}**", expanded=False):
+            st.markdown(f"🔗 [**Open Channel**]({c_url})")
             
-            st.markdown(f"🔗 [**Open {channel_name} Channel**]({c_url})")
-            
-          # Updated Layout: Added a column for the Trans button
+            # Layout Columns
             h1, h3, h4, h5, h6 = st.columns([5, 1, 1, 1, 1])
             h1.markdown("<small style='color:grey'>VIDEO TITLE</small>", unsafe_allow_html=True)
             h3.markdown("<small style='color:grey'>VIEWS</small>", unsafe_allow_html=True)
             h4.markdown("<small style='color:grey'>LENGTH</small>", unsafe_allow_html=True)
-            h5.markdown("<small style='color:grey'>EXTRA</small>", unsafe_allow_html=True) # The ✨ Popover
-            h6.markdown("<small style='color:grey'>TRANS</small>", unsafe_allow_html=True) # The New Button
+            h5.markdown("<small style='color:grey'>EXTRA</small>", unsafe_allow_html=True)
+            h6.markdown("<small style='color:grey'>TRANS</small>", unsafe_allow_html=True)
             
             st.divider()
 
             for i, v in enumerate(channel_videos):
                 c1, c3, c4, c5, c6 = st.columns([5, 1, 1, 1, 1])
                 
-                # 1. Title
+                # Column 1: Title
                 c1.markdown(f"[{v['title']}]({v['url']})", unsafe_allow_html=True)
                 
-                # 2. Metrics
+                # Column 2 & 3: Metrics
                 c3.write(format_views(v['views']))
                 c4.write(format_duration(v['duration']))
                 
-                # 3. Existing ✨ Popover (Untouched)
+                # Column 4: Popover
                 with c5:
                     with st.popover("✨"):
                         st.caption("Copy Link:")
@@ -200,23 +200,22 @@ else:
                         st.caption("Summarize:")
                         st.link_button("Go to Gemini 💎", GEM_URL)
                 
-                # 4. New "Trans." Button
+                # Column 5: Transcript (On-Demand)
                 with c6:
-                    ts_content = get_transcript(v['url'])
-                    st.download_button(
-                        label="📄", 
-                        data=ts_content,
-                        file_name=f"transcript_{v['url'].split('v=')[-1]}.md",
-                        mime="text/markdown",
-                        help="Download Transcript"
-                    )
-            
-                
-                # SPACER
+                    if st.button("📄", key=f"btn_{v['id']}_{i}", help="Fetch Transcript"):
+                        with st.spinner("Wait..."):
+                            content = get_transcript(v['url'])
+                        
+                        if content:
+                            st.download_button(
+                                label="💾",
+                                data=f"# {v['title']}\n\n{content}",
+                                file_name=f"transcript_{v['id']}.md",
+                                mime="text/markdown",
+                                key=f"dl_{v['id']}_{i}"
+                            )
+                        else:
+                            st.error("N/A")
+
                 if i < len(channel_videos) - 1:
-                     st.markdown("<hr style='margin: 5px 0; opacity: 0.3;'>", unsafe_allow_html=True)
-                else:
-                     st.markdown("<div style='margin-bottom: 10px;'></div>", unsafe_allow_html=True)
-
-
-
+                     st.markdown("<hr style='margin: 5px 0; opacity: 0.1;'>", unsafe_allow_html=True)
