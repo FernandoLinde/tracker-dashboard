@@ -3,6 +3,16 @@ import yt_dlp
 import datetime
 from itertools import groupby
 
+from youtube_transcript_api import YouTubeTranscriptApi
+
+def get_transcript(video_url):
+    try:
+        video_id = video_url.split("v=")[-1]
+        transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['pt', 'en'])
+        return "\n".join([t['text'] for t in transcript_list])
+    except:
+        return "Transcript not available."
+
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Executive Tracker", page_icon="📊", layout="wide")
 
@@ -162,37 +172,51 @@ else:
             
             st.markdown(f"🔗 [**Open {channel_name} Channel**]({c_url})")
             
-            # Layout: [Title (5)] | [Views (1)] | [Length (1)] | [Actions (1.5)]
-            h1, h3, h4, h5 = st.columns([5, 1, 1, 1.5])
+          # Updated Layout: Added a column for the Trans button
+            h1, h3, h4, h5, h6 = st.columns([5, 1, 1, 1, 1])
             h1.markdown("<small style='color:grey'>VIDEO TITLE</small>", unsafe_allow_html=True)
             h3.markdown("<small style='color:grey'>VIEWS</small>", unsafe_allow_html=True)
             h4.markdown("<small style='color:grey'>LENGTH</small>", unsafe_allow_html=True)
-            h5.markdown("<small style='color:grey'>ACTIONS</small>", unsafe_allow_html=True)
+            h5.markdown("<small style='color:grey'>EXTRA</small>", unsafe_allow_html=True) # The ✨ Popover
+            h6.markdown("<small style='color:grey'>TRANS</small>", unsafe_allow_html=True) # The New Button
             
             st.divider()
 
             for i, v in enumerate(channel_videos):
-                c1, c3, c4, c5 = st.columns([5, 1, 1, 1.5])
+                c1, c3, c4, c5, c6 = st.columns([5, 1, 1, 1, 1])
                 
-                # Title
+                # 1. Title
                 c1.markdown(f"[{v['title']}]({v['url']})", unsafe_allow_html=True)
                 
-                # Metrics
+                # 2. Metrics
                 c3.write(format_views(v['views']))
                 c4.write(format_duration(v['duration']))
                 
-                # Copy Link & Gemini
+                # 3. Existing ✨ Popover (Untouched)
                 with c5:
                     with st.popover("✨"):
                         st.caption("Copy Link:")
-                        st.code(v['url'], language="text") # This creates a one-click copy button
+                        st.code(v['url'], language="text")
                         st.caption("Summarize:")
                         st.link_button("Go to Gemini 💎", GEM_URL)
+                
+                # 4. New "Trans." Button
+                with c6:
+                    ts_content = get_transcript(v['url'])
+                    st.download_button(
+                        label="📄", 
+                        data=ts_content,
+                        file_name=f"transcript_{v['url'].split('v=')[-1]}.md",
+                        mime="text/markdown",
+                        help="Download Transcript"
+                    )
+            
                 
                 # SPACER
                 if i < len(channel_videos) - 1:
                      st.markdown("<hr style='margin: 5px 0; opacity: 0.3;'>", unsafe_allow_html=True)
                 else:
                      st.markdown("<div style='margin-bottom: 10px;'></div>", unsafe_allow_html=True)
+
 
 
