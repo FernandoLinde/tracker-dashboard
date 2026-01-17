@@ -2,18 +2,26 @@ import streamlit as st
 import yt_dlp
 import datetime
 import re
+import time
 from itertools import groupby
 from youtube_transcript_api import YouTubeTranscriptApi
-from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound
+from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound, VideoUnavailable
 
 # --- HELPER FUNCTIONS ---
 
 def extract_video_id(url):
     """Extract video ID from various YouTube URL formats."""
+    # First try simple split method
+    if 'v=' in url:
+        video_id = url.split('v=')[-1].split('&')[0]
+        if len(video_id) == 11:
+            return video_id
+    
+    # Then try regex patterns
     patterns = [
-        r'(?:v=|\/)([0-9A-Za-z_-]{11}).*',
-        r'(?:embed\/)([0-9A-Za-z_-]{11})',
-        r'(?:watch\?v=)([0-9A-Za-z_-]{11})',
+        r'(?:youtube\.com\/watch\?v=|youtu\.be\/)([0-9A-Za-z_-]{11})',
+        r'(?:youtube\.com\/embed\/)([0-9A-Za-z_-]{11})',
+        r'(?:youtube\.com\/v\/)([0-9A-Za-z_-]{11})',
         r'^([0-9A-Za-z_-]{11})$'
     ]
     
@@ -21,77 +29,90 @@ def extract_video_id(url):
         match = re.search(pattern, url)
         if match:
             return match.group(1)
+    
     return None
 
-def get_transcript(video_url):
-    """Fetches transcript on-demand with comprehensive fallback logic."""
-    try:
-        # Extract video ID properly
-        video_id = extract_video_id(video_url)
-        
-        if not video_id:
-            print(f"Could not extract video ID from: {video_url}")
-            return None
-        
-        # Get all available transcripts
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-        
-        transcript = None
-        
-        # Priority 1: Try manual Portuguese transcript
+def get_transcript(video_url, max_retries=2):
+    """Fetches transcript with multiple retry strategies."""
+    
+    for attempt in range(max_retries):
         try:
-            transcript = transcript_list.find_manually_created_transcript(['pt'])
-        except:
-            pass
-        
-        # Priority 2: Try manual English transcript
-        if not transcript:
-            try:
-                transcript = transcript_list.find_manually_created_transcript(['en'])
-            except:
-                pass
-        
-        # Priority 3: Try auto-generated Portuguese
-        if not transcript:
-            try:
-                transcript = transcript_list.find_generated_transcript(['pt'])
-            except:
-                pass
-        
-        # Priority 4: Try auto-generated English
-        if not transcript:
-            try:
-                transcript = transcript_list.find_generated_transcript(['en'])
-            except:
-                pass
-        
-        # Priority 5: Get ANY available transcript
-        if not transcript:
-            try:
-                # Get first available transcript regardless of language
-                for t in transcript_list:
-                    transcript = t
-                    break
-            except:
-                pass
-        
-        # If we found a transcript, fetch and return it
-        if transcript:
-            full_text = "\n".join([item['text'] for item in transcript.fetch()])
-            return full_text
-        else:
-            print(f"No transcript available for video: {video_id}")
-            return None
+            # Extract video ID
+            video_id = extract_video_id(video_url)
             
-    except TranscriptsDisabled:
-        print(f"Transcripts are disabled for video: {video_url}")
-        return None
-    except NoTranscriptFound:
-        print(f"No transcript found for video: {video_url}")
-        return None
-    except Exception as e:
-        print(f"Error fetching transcript for {video_url}: {str(e)}")
-        return None
+            if not video_id:
+                st.error(f"❌ Invalid video ID from URL")
+                return None
+            
+            # Add small delay between retries
+            if attempt > 0:
+                time.sleep(1)
+            
+            # List all available transcripts
+            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+            
+            # Strategy 1: Try to get any manually created transcript first
+            try:
+                for transcript in transcript_list:
+                    if not transcript.is_generated:
+                        return "\n".join([item['text'] for item in transcript.fetch()])
+            except:
+                pass
+            
+            # Strategy 2: Try Portuguese (manual or auto)
+            try:
+                transcript = transcript_list.find_transcript(['pt', 'pt-BR'])
+                return "\n".join([item['text'] for item in transcript.fetch()])
+            except:
+                pass
+            
+            # Strategy 3: Try English (manual or auto)
+            try:
+                transcript = transcript_list.find_transcript(['en', 'en-US', 'en-GB'])
+                return "\n".join([item['text'] for item in transcript.fetch()])
+            except:
+                pass
+            
+            # Strategy 4: Try ANY available transcript and translate if needed
+            try:
+                available_transcripts = list(transcript_list)
+                if available_transcripts:
+                    # Get the first available transcript
+                    first_transcript = available_transcripts[0]
+                    
+                    # Try to translate to Portuguese if it's not PT or EN
+                    try:
+                        translated = first_transcript.translate('pt')
+                        return "\n".join([item['text'] for item in translated.fetch()])
+                    except:
+                        # If translation fails, just return the original
+                        return "\n".join([item['text'] for item in first_transcript.fetch()])
+            except:
+                pass
+            
+            # Strategy 5: Direct fetch without language preference
+            try:
+                transcript_data = YouTubeTranscriptApi.get_transcript(video_id)
+                return "\n".join([item['text'] for item in transcript_data])
+            except:
+                pass
+                
+        except TranscriptsDisabled:
+            st.warning(f"⚠️ Transcripts disabled for this video")
+            return None
+        except NoTranscriptFound:
+            st.warning(f"⚠️ No transcript found")
+            return None
+        except VideoUnavailable:
+            st.error(f"❌ Video unavailable")
+            return None
+        except Exception as e:
+            if attempt == max_retries - 1:
+                st.error(f"❌ Error: {type(e).__name__}")
+                print(f"Full error for {video_id}: {str(e)}")
+            continue
+    
+    return None
 
 def format_views(views):
     if not views: return "-"
@@ -131,6 +152,11 @@ st.markdown("""
     }
     div[data-testid="stVerticalBlock"] > div {
         margin-bottom: -5px;
+    }
+    .stAlert {
+        padding: 0.5rem;
+        margin: 0.25rem 0;
+        font-size: 0.8rem;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -223,6 +249,9 @@ with st.sidebar:
     if st.button("🔄 Refresh Data"):
         st.cache_data.clear()
         st.rerun()
+    
+    st.divider()
+    st.caption("💡 Tip: If transcript fails, the video may not have captions enabled by the creator.")
 
 # --- MAIN CONTENT ---
 st.title(f"📺 {selected_category}")
@@ -267,25 +296,26 @@ else:
                     with st.popover("✨"):
                         st.caption("Copy Link:")
                         st.code(v['url'], language="text")
+                        st.caption("Video ID:")
+                        st.code(v['id'], language="text")
                         st.caption("Summarize:")
                         st.link_button("Go to Gemini 💎", GEM_URL)
                 
                 # Column 5: Transcript (On-Demand)
                 with c6:
                     if st.button("📄", key=f"btn_{v['id']}_{i}", help="Fetch Transcript"):
-                        with st.spinner("Wait..."):
+                        with st.spinner("Fetching..."):
                             content = get_transcript(v['url'])
                         
                         if content:
+                            st.success("✓")
                             st.download_button(
-                                label="💾",
+                                label="💾 Download",
                                 data=f"# {v['title']}\n\n{content}",
                                 file_name=f"transcript_{v['id']}.md",
                                 mime="text/markdown",
                                 key=f"dl_{v['id']}_{i}"
                             )
-                        else:
-                            st.error("N/A")
 
                 if i < len(channel_videos) - 1:
                      st.markdown("<hr style='margin: 5px 0; opacity: 0.1;'>", unsafe_allow_html=True)
