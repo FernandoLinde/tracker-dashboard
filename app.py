@@ -1,26 +1,96 @@
 import streamlit as st
 import yt_dlp
 import datetime
+import re
 from itertools import groupby
 from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound
 
 # --- HELPER FUNCTIONS ---
 
+def extract_video_id(url):
+    """Extract video ID from various YouTube URL formats."""
+    patterns = [
+        r'(?:v=|\/)([0-9A-Za-z_-]{11}).*',
+        r'(?:embed\/)([0-9A-Za-z_-]{11})',
+        r'(?:watch\?v=)([0-9A-Za-z_-]{11})',
+        r'^([0-9A-Za-z_-]{11})$'
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+    return None
+
 def get_transcript(video_url):
-    """Fetches transcript on-demand with fallback logic for auto-generated captions."""
+    """Fetches transcript on-demand with comprehensive fallback logic."""
     try:
-        video_id = video_url.split("v=")[-1]
+        # Extract video ID properly
+        video_id = extract_video_id(video_url)
+        
+        if not video_id:
+            print(f"Could not extract video ID from: {video_url}")
+            return None
+        
+        # Get all available transcripts
         transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
         
-        # Try to find Portuguese or English (Manual first, then Auto-generated)
+        transcript = None
+        
+        # Priority 1: Try manual Portuguese transcript
         try:
-            t = transcript_list.find_transcript(['pt', 'en'])
+            transcript = transcript_list.find_manually_created_transcript(['pt'])
         except:
-            t = transcript_list.find_generated_transcript(['pt', 'en'])
+            pass
+        
+        # Priority 2: Try manual English transcript
+        if not transcript:
+            try:
+                transcript = transcript_list.find_manually_created_transcript(['en'])
+            except:
+                pass
+        
+        # Priority 3: Try auto-generated Portuguese
+        if not transcript:
+            try:
+                transcript = transcript_list.find_generated_transcript(['pt'])
+            except:
+                pass
+        
+        # Priority 4: Try auto-generated English
+        if not transcript:
+            try:
+                transcript = transcript_list.find_generated_transcript(['en'])
+            except:
+                pass
+        
+        # Priority 5: Get ANY available transcript
+        if not transcript:
+            try:
+                # Get first available transcript regardless of language
+                for t in transcript_list:
+                    transcript = t
+                    break
+            except:
+                pass
+        
+        # If we found a transcript, fetch and return it
+        if transcript:
+            full_text = "\n".join([item['text'] for item in transcript.fetch()])
+            return full_text
+        else:
+            print(f"No transcript available for video: {video_id}")
+            return None
             
-        full_text = "\n".join([item['text'] for item in t.fetch()])
-        return full_text
+    except TranscriptsDisabled:
+        print(f"Transcripts are disabled for video: {video_url}")
+        return None
+    except NoTranscriptFound:
+        print(f"No transcript found for video: {video_url}")
+        return None
     except Exception as e:
+        print(f"Error fetching transcript for {video_url}: {str(e)}")
         return None
 
 def format_views(views):
