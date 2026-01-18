@@ -1,116 +1,82 @@
 import streamlit as st
 import yt_dlp
 import datetime
-import re
-import time
 from itertools import groupby
-from youtube_transcript_api import YouTubeTranscriptApi
-from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound, VideoUnavailable
 
 # --- HELPER FUNCTIONS ---
 
-def extract_video_id(url):
-    """Extract video ID from various YouTube URL formats."""
-    # First try simple split method
-    if 'v=' in url:
-        video_id = url.split('v=')[-1].split('&')[0]
-        if len(video_id) == 11:
-            return video_id
-    
-    # Then try regex patterns
-    patterns = [
-        r'(?:youtube\.com\/watch\?v=|youtu\.be\/)([0-9A-Za-z_-]{11})',
-        r'(?:youtube\.com\/embed\/)([0-9A-Za-z_-]{11})',
-        r'(?:youtube\.com\/v\/)([0-9A-Za-z_-]{11})',
-        r'^([0-9A-Za-z_-]{11})$'
-    ]
-    
-    for pattern in patterns:
-        match = re.search(pattern, url)
-        if match:
-            return match.group(1)
-    
-    return None
+def get_transcript_with_ytdlp(video_url):
+    """Use yt-dlp to fetch subtitles - more reliable alternative."""
+    try:
+        ydl_opts = {
+            'skip_download': True,
+            'writesubtitles': True,
+            'writeautomaticsub': True,
+            'subtitleslangs': ['pt', 'pt-BR', 'en', 'en-US'],
+            'quiet': True,
+            'no_warnings': True,
+        }
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(video_url, download=False)
+            
+            # Try to get subtitles in order of preference
+            subtitles = info.get('subtitles', {})
+            automatic_captions = info.get('automatic_captions', {})
+            
+            # Priority order: pt manual > en manual > pt auto > en auto
+            for lang in ['pt', 'pt-BR', 'en', 'en-US', 'en-GB']:
+                if lang in subtitles:
+                    return extract_text_from_subtitle_data(subtitles[lang])
+            
+            for lang in ['pt', 'pt-BR', 'en', 'en-US', 'en-GB']:
+                if lang in automatic_captions:
+                    return extract_text_from_subtitle_data(automatic_captions[lang])
+            
+            # If no preferred language, get first available
+            if subtitles:
+                first_lang = list(subtitles.keys())[0]
+                return extract_text_from_subtitle_data(subtitles[first_lang])
+            
+            if automatic_captions:
+                first_lang = list(automatic_captions.keys())[0]
+                return extract_text_from_subtitle_data(automatic_captions[first_lang])
+            
+            return None
+            
+    except Exception as e:
+        print(f"yt-dlp error: {str(e)}")
+        return None
 
-def get_transcript(video_url, max_retries=2):
-    """Fetches transcript with multiple retry strategies."""
+def extract_text_from_subtitle_data(subtitle_list):
+    """Extract text from subtitle format data."""
+    import requests
     
-    for attempt in range(max_retries):
-        try:
-            # Extract video ID
-            video_id = extract_video_id(video_url)
-            
-            if not video_id:
-                st.error(f"❌ Invalid video ID from URL")
-                return None
-            
-            # Add small delay between retries
-            if attempt > 0:
-                time.sleep(1)
-            
-            # List all available transcripts
-            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-            
-            # Strategy 1: Try to get any manually created transcript first
+    # subtitle_list contains different formats (vtt, srv3, etc)
+    # Try to find a text-based format
+    for sub_format in subtitle_list:
+        if 'url' in sub_format:
             try:
-                for transcript in transcript_list:
-                    if not transcript.is_generated:
-                        return "\n".join([item['text'] for item in transcript.fetch()])
-            except:
-                pass
-            
-            # Strategy 2: Try Portuguese (manual or auto)
-            try:
-                transcript = transcript_list.find_transcript(['pt', 'pt-BR'])
-                return "\n".join([item['text'] for item in transcript.fetch()])
-            except:
-                pass
-            
-            # Strategy 3: Try English (manual or auto)
-            try:
-                transcript = transcript_list.find_transcript(['en', 'en-US', 'en-GB'])
-                return "\n".join([item['text'] for item in transcript.fetch()])
-            except:
-                pass
-            
-            # Strategy 4: Try ANY available transcript and translate if needed
-            try:
-                available_transcripts = list(transcript_list)
-                if available_transcripts:
-                    # Get the first available transcript
-                    first_transcript = available_transcripts[0]
-                    
-                    # Try to translate to Portuguese if it's not PT or EN
-                    try:
-                        translated = first_transcript.translate('pt')
-                        return "\n".join([item['text'] for item in translated.fetch()])
-                    except:
-                        # If translation fails, just return the original
-                        return "\n".join([item['text'] for item in first_transcript.fetch()])
-            except:
-                pass
-            
-            # Strategy 5: Direct fetch without language preference
-            try:
-                transcript_data = YouTubeTranscriptApi.get_transcript(video_id)
-                return "\n".join([item['text'] for item in transcript_data])
-            except:
-                pass
+                response = requests.get(sub_format['url'], timeout=10)
+                content = response.text
                 
-        except TranscriptsDisabled:
-            st.warning(f"⚠️ Transcripts disabled for this video")
-            return None
-        except NoTranscriptFound:
-            st.warning(f"⚠️ No transcript found")
-            return None
-        except VideoUnavailable:
-            st.error(f"❌ Video unavailable")
-            return None
-        except Exception as e:
-            if attempt == max_retries - 1:
-                st.error(f"❌ Error: {type(e).__name__}")
-                print(f"Full error for {video_id}: {str(e)}")
-            continue
+                # Parse VTT or SRT format
+                lines = content.split('\n')
+                text_lines = []
+                
+                for line in lines:
+                    line = line.strip()
+                    # Skip timestamp lines and metadata
+                    if '-->' in line or line.isdigit() or line.startswith('WEBVTT') or line.startswith('Kind:') or not line:
+                        continue
+                    # Skip lines with only tags
+                    if line.startswith('<') and line.endswith('>'):
+                        continue
+                    text_lines.append(line)
+                
+                return '\n'.join(text_lines)
+            except:
+                continue
     
     return None
 
@@ -152,11 +118,6 @@ st.markdown("""
     }
     div[data-testid="stVerticalBlock"] > div {
         margin-bottom: -5px;
-    }
-    .stAlert {
-        padding: 0.5rem;
-        margin: 0.25rem 0;
-        font-size: 0.8rem;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -251,7 +212,7 @@ with st.sidebar:
         st.rerun()
     
     st.divider()
-    st.caption("💡 Tip: If transcript fails, the video may not have captions enabled by the creator.")
+    st.caption("📝 Using yt-dlp for transcript extraction")
 
 # --- MAIN CONTENT ---
 st.title(f"📺 {selected_category}")
@@ -296,8 +257,6 @@ else:
                     with st.popover("✨"):
                         st.caption("Copy Link:")
                         st.code(v['url'], language="text")
-                        st.caption("Video ID:")
-                        st.code(v['id'], language="text")
                         st.caption("Summarize:")
                         st.link_button("Go to Gemini 💎", GEM_URL)
                 
@@ -305,17 +264,19 @@ else:
                 with c6:
                     if st.button("📄", key=f"btn_{v['id']}_{i}", help="Fetch Transcript"):
                         with st.spinner("Fetching..."):
-                            content = get_transcript(v['url'])
+                            content = get_transcript_with_ytdlp(v['url'])
                         
-                        if content:
+                        if content and len(content.strip()) > 0:
                             st.success("✓")
                             st.download_button(
-                                label="💾 Download",
+                                label="💾",
                                 data=f"# {v['title']}\n\n{content}",
                                 file_name=f"transcript_{v['id']}.md",
                                 mime="text/markdown",
                                 key=f"dl_{v['id']}_{i}"
                             )
+                        else:
+                            st.error("No captions available")
 
                 if i < len(channel_videos) - 1:
                      st.markdown("<hr style='margin: 5px 0; opacity: 0.1;'>", unsafe_allow_html=True)
