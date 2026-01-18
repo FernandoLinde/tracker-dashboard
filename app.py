@@ -2,83 +2,49 @@ import streamlit as st
 import yt_dlp
 import datetime
 from itertools import groupby
+from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound, VideoUnavailable
 
 # --- HELPER FUNCTIONS ---
 
-def get_transcript_with_ytdlp(video_url):
-    """Use yt-dlp to fetch subtitles - more reliable alternative."""
+def get_transcript(video_url):
+    """Fetches transcript using the official youtube-transcript-api."""
     try:
-        ydl_opts = {
-            'skip_download': True,
-            'writesubtitles': True,
-            'writeautomaticsub': True,
-            'subtitleslangs': ['pt', 'pt-BR', 'en', 'en-US'],
-            'quiet': True,
-            'no_warnings': True,
-        }
+        # Extract video ID from URL
+        if 'v=' in video_url:
+            video_id = video_url.split('v=')[-1].split('&')[0]
+        elif 'youtu.be/' in video_url:
+            video_id = video_url.split('youtu.be/')[-1].split('?')[0]
+        else:
+            video_id = video_url
         
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(video_url, download=False)
-            
-            # Try to get subtitles in order of preference
-            subtitles = info.get('subtitles', {})
-            automatic_captions = info.get('automatic_captions', {})
-            
-            # Priority order: pt manual > en manual > pt auto > en auto
-            for lang in ['pt', 'pt-BR', 'en', 'en-US', 'en-GB']:
-                if lang in subtitles:
-                    return extract_text_from_subtitle_data(subtitles[lang])
-            
-            for lang in ['pt', 'pt-BR', 'en', 'en-US', 'en-GB']:
-                if lang in automatic_captions:
-                    return extract_text_from_subtitle_data(automatic_captions[lang])
-            
-            # If no preferred language, get first available
-            if subtitles:
-                first_lang = list(subtitles.keys())[0]
-                return extract_text_from_subtitle_data(subtitles[first_lang])
-            
-            if automatic_captions:
-                first_lang = list(automatic_captions.keys())[0]
-                return extract_text_from_subtitle_data(automatic_captions[first_lang])
-            
-            return None
-            
-    except Exception as e:
-        print(f"yt-dlp error: {str(e)}")
+        # Initialize the API
+        ytt_api = YouTubeTranscriptApi()
+        
+        # Try to fetch transcript with language preferences
+        try:
+            # First try with Portuguese and English
+            fetched_transcript = ytt_api.fetch(video_id, languages=['pt', 'pt-BR', 'en', 'en-US'])
+        except:
+            # If that fails, just try to get any transcript
+            fetched_transcript = ytt_api.fetch(video_id)
+        
+        # Convert to text format
+        full_text = "\n".join([snippet.text for snippet in fetched_transcript])
+        return full_text
+        
+    except TranscriptsDisabled:
+        print(f"Transcripts are disabled for video: {video_id}")
         return None
-
-def extract_text_from_subtitle_data(subtitle_list):
-    """Extract text from subtitle format data."""
-    import requests
-    
-    # subtitle_list contains different formats (vtt, srv3, etc)
-    # Try to find a text-based format
-    for sub_format in subtitle_list:
-        if 'url' in sub_format:
-            try:
-                response = requests.get(sub_format['url'], timeout=10)
-                content = response.text
-                
-                # Parse VTT or SRT format
-                lines = content.split('\n')
-                text_lines = []
-                
-                for line in lines:
-                    line = line.strip()
-                    # Skip timestamp lines and metadata
-                    if '-->' in line or line.isdigit() or line.startswith('WEBVTT') or line.startswith('Kind:') or not line:
-                        continue
-                    # Skip lines with only tags
-                    if line.startswith('<') and line.endswith('>'):
-                        continue
-                    text_lines.append(line)
-                
-                return '\n'.join(text_lines)
-            except:
-                continue
-    
-    return None
+    except NoTranscriptFound:
+        print(f"No transcript found for video: {video_id}")
+        return None
+    except VideoUnavailable:
+        print(f"Video is unavailable: {video_id}")
+        return None
+    except Exception as e:
+        print(f"Error fetching transcript: {type(e).__name__} - {str(e)}")
+        return None
 
 def format_views(views):
     if not views: return "-"
@@ -212,7 +178,7 @@ with st.sidebar:
         st.rerun()
     
     st.divider()
-    st.caption("📝 Using yt-dlp for transcript extraction")
+    st.caption("💡 Using official YouTube Transcript API")
 
 # --- MAIN CONTENT ---
 st.title(f"📺 {selected_category}")
@@ -264,10 +230,9 @@ else:
                 with c6:
                     if st.button("📄", key=f"btn_{v['id']}_{i}", help="Fetch Transcript"):
                         with st.spinner("Fetching..."):
-                            content = get_transcript_with_ytdlp(v['url'])
+                            content = get_transcript(v['url'])
                         
                         if content and len(content.strip()) > 0:
-                            st.success("✓")
                             st.download_button(
                                 label="💾",
                                 data=f"# {v['title']}\n\n{content}",
@@ -276,7 +241,7 @@ else:
                                 key=f"dl_{v['id']}_{i}"
                             )
                         else:
-                            st.error("No captions available")
+                            st.error("N/A")
 
                 if i < len(channel_videos) - 1:
                      st.markdown("<hr style='margin: 5px 0; opacity: 0.1;'>", unsafe_allow_html=True)
