@@ -18,19 +18,11 @@ def get_transcript(video_url):
         else:
             video_id = video_url
         
-        # Initialize the API
-        ytt_api = YouTubeTranscriptApi()
-        
-        # Try to fetch transcript with language preferences
-        try:
-            # First try with Portuguese and English
-            fetched_transcript = ytt_api.fetch(video_id, languages=['pt', 'pt-BR', 'en', 'en-US'])
-        except:
-            # If that fails, just try to get any transcript
-            fetched_transcript = ytt_api.fetch(video_id)
+        # Use the correct API method - get_transcript is a CLASS METHOD
+        transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=['pt', 'pt-BR', 'en', 'en-US'])
         
         # Convert to text format
-        full_text = "\n".join([snippet.text for snippet in fetched_transcript])
+        full_text = "\n".join([entry['text'] for entry in transcript])
         return full_text
         
     except TranscriptsDisabled:
@@ -162,21 +154,16 @@ def get_channel_data(category_name):
     channels = CATEGORIES[category_name]
     all_videos = []
     
-    ydl_opts = {
-        'extract_flat': 'in_playlist',  # Changed from True to 'in_playlist'
+    # Changed approach: fetch minimal data first, then get upload dates separately
+    ydl_opts_flat = {
+        'extract_flat': 'in_playlist',
         'playlist_items': '1-7',      
         'quiet': True,
         'no_warnings': True,
         'ignoreerrors': True,
-        'extractor_args': {
-            'youtube': {
-                'skip': ['authcheck'],
-                'approximate_date': True  # This helps get upload dates in flat mode
-            }
-        }
     }
 
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+    with yt_dlp.YoutubeDL(ydl_opts_flat) as ydl:
         for channel_url in channels:
             clean_url = channel_url.rstrip('/')
             if not clean_url.endswith('/videos'):
@@ -197,12 +184,29 @@ def get_channel_data(category_name):
                             'url': f"https://www.youtube.com/watch?v={vid_id}",
                             'views': v.get('view_count'),
                             'duration': v.get('duration'),
-                            'upload_date': v.get('upload_date'),  # Should now work with approximate_date
+                            'upload_date': None,  # Will be fetched separately if needed
                             'id': vid_id
                         })
             except Exception as e:
                 print(f"Error fetching {channel_url}: {e}")
                 continue
+    
+    # Now fetch upload dates for each video (this is slower but more reliable)
+    ydl_opts_single = {
+        'quiet': True,
+        'no_warnings': True,
+        'extract_flat': False,  # Get full info for upload date
+        'skip_download': True,
+    }
+    
+    with yt_dlp.YoutubeDL(ydl_opts_single) as ydl:
+        for video in all_videos:
+            try:
+                video_info = ydl.extract_info(video['url'], download=False)
+                video['upload_date'] = video_info.get('upload_date')
+            except:
+                video['upload_date'] = None
+                
     return all_videos
 
 # Initialize session state for transcripts
