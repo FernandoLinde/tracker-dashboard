@@ -59,6 +59,35 @@ def format_duration(seconds):
     except:
         return "-"
 
+def format_upload_date(upload_date_str):
+    """Format upload date as 'X days ago' from YYYYMMDD string"""
+    if not upload_date_str or upload_date_str == "NA":
+        return "-"
+    try:
+        # Parse the YYYYMMDD format
+        upload_date = datetime.datetime.strptime(str(upload_date_str), '%Y%m%d')
+        now = datetime.datetime.now()
+        delta = now - upload_date
+        days = delta.days
+        
+        if days == 0:
+            return "Today"
+        elif days == 1:
+            return "1 day ago"
+        elif days < 7:
+            return f"{days} days ago"
+        elif days < 30:
+            weeks = days // 7
+            return f"{weeks} week{'s' if weeks > 1 else ''} ago"
+        elif days < 365:
+            months = days // 30
+            return f"{months} month{'s' if months > 1 else ''} ago"
+        else:
+            years = days // 365
+            return f"{years} year{'s' if years > 1 else ''} ago"
+    except:
+        return "-"
+
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Executive Tracker", page_icon="📊", layout="wide")
 
@@ -134,12 +163,17 @@ def get_channel_data(category_name):
     all_videos = []
     
     ydl_opts = {
-        'extract_flat': True,          
+        'extract_flat': 'in_playlist',  # Changed from True to 'in_playlist'
         'playlist_items': '1-7',      
-        'lazy_playlist': True,
         'quiet': True,
         'no_warnings': True,
         'ignoreerrors': True,
+        'extractor_args': {
+            'youtube': {
+                'skip': ['authcheck'],
+                'approximate_date': True  # This helps get upload dates in flat mode
+            }
+        }
     }
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -163,11 +197,17 @@ def get_channel_data(category_name):
                             'url': f"https://www.youtube.com/watch?v={vid_id}",
                             'views': v.get('view_count'),
                             'duration': v.get('duration'),
+                            'upload_date': v.get('upload_date'),  # Should now work with approximate_date
                             'id': vid_id
                         })
-            except:
+            except Exception as e:
+                print(f"Error fetching {channel_url}: {e}")
                 continue
     return all_videos
+
+# Initialize session state for transcripts
+if 'transcripts' not in st.session_state:
+    st.session_state.transcripts = {}
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -175,6 +215,7 @@ with st.sidebar:
     selected_category = st.radio("Select Category:", list(CATEGORIES.keys()))
     if st.button("🔄 Refresh Data"):
         st.cache_data.clear()
+        st.session_state.transcripts = {}
         st.rerun()
     
     st.divider()
@@ -199,8 +240,9 @@ else:
             st.markdown(f"🔗 [**Open Channel**]({c_url})")
             
             # Layout Columns
-            h1, h3, h4, h5, h6 = st.columns([5, 1, 1, 1, 1])
+            h1, h2, h3, h4, h5, h6 = st.columns([4, 1, 1, 1, 1, 1])
             h1.markdown("<small style='color:grey'>VIDEO TITLE</small>", unsafe_allow_html=True)
+            h2.markdown("<small style='color:grey'>UPLOADED</small>", unsafe_allow_html=True)
             h3.markdown("<small style='color:grey'>VIEWS</small>", unsafe_allow_html=True)
             h4.markdown("<small style='color:grey'>LENGTH</small>", unsafe_allow_html=True)
             h5.markdown("<small style='color:grey'>EXTRA</small>", unsafe_allow_html=True)
@@ -209,16 +251,19 @@ else:
             st.divider()
 
             for i, v in enumerate(channel_videos):
-                c1, c3, c4, c5, c6 = st.columns([5, 1, 1, 1, 1])
+                c1, c2, c3, c4, c5, c6 = st.columns([4, 1, 1, 1, 1, 1])
                 
                 # Column 1: Title
                 c1.markdown(f"[{v['title']}]({v['url']})", unsafe_allow_html=True)
                 
-                # Column 2 & 3: Metrics
+                # Column 2: Upload Date
+                c2.write(format_upload_date(v['upload_date']))
+                
+                # Column 3 & 4: Metrics
                 c3.write(format_views(v['views']))
                 c4.write(format_duration(v['duration']))
                 
-                # Column 4: Popover
+                # Column 5: Popover
                 with c5:
                     with st.popover("✨"):
                         st.caption("Copy Link:")
@@ -226,22 +271,32 @@ else:
                         st.caption("Summarize:")
                         st.link_button("Go to Gemini 💎", GEM_URL)
                 
-                # Column 5: Transcript (On-Demand)
+                # Column 6: Transcript (On-Demand)
                 with c6:
+                    # Create unique key for this video
+                    transcript_key = f"transcript_{v['id']}"
+                    
+                    # Fetch button
                     if st.button("📄", key=f"btn_{v['id']}_{i}", help="Fetch Transcript"):
                         with st.spinner("Fetching..."):
                             content = get_transcript(v['url'])
-                        
-                        if content and len(content.strip()) > 0:
+                            if content and len(content.strip()) > 0:
+                                st.session_state.transcripts[transcript_key] = content
+                            else:
+                                st.session_state.transcripts[transcript_key] = "ERROR"
+                    
+                    # Show download button if transcript is available
+                    if transcript_key in st.session_state.transcripts:
+                        if st.session_state.transcripts[transcript_key] == "ERROR":
+                            st.error("N/A")
+                        else:
                             st.download_button(
                                 label="💾",
-                                data=f"# {v['title']}\n\n{content}",
+                                data=f"# {v['title']}\n\n{st.session_state.transcripts[transcript_key]}",
                                 file_name=f"transcript_{v['id']}.md",
                                 mime="text/markdown",
                                 key=f"dl_{v['id']}_{i}"
                             )
-                        else:
-                            st.error("N/A")
 
                 if i < len(channel_videos) - 1:
                      st.markdown("<hr style='margin: 5px 0; opacity: 0.1;'>", unsafe_allow_html=True)
