@@ -154,16 +154,20 @@ def get_channel_data(category_name):
     channels = CATEGORIES[category_name]
     all_videos = []
     
-    # Changed approach: fetch minimal data first, then get upload dates separately
-    ydl_opts_flat = {
+    ydl_opts = {
         'extract_flat': 'in_playlist',
         'playlist_items': '1-7',      
         'quiet': True,
         'no_warnings': True,
         'ignoreerrors': True,
+        'extractor_args': {
+            'youtubetab': {
+                'approximate_date': True  # This enables approximate upload dates in flat mode
+            }
+        }
     }
 
-    with yt_dlp.YoutubeDL(ydl_opts_flat) as ydl:
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         for channel_url in channels:
             clean_url = channel_url.rstrip('/')
             if not clean_url.endswith('/videos'):
@@ -184,28 +188,12 @@ def get_channel_data(category_name):
                             'url': f"https://www.youtube.com/watch?v={vid_id}",
                             'views': v.get('view_count'),
                             'duration': v.get('duration'),
-                            'upload_date': None,  # Will be fetched separately if needed
+                            'upload_date': v.get('upload_date'),
                             'id': vid_id
                         })
             except Exception as e:
                 print(f"Error fetching {channel_url}: {e}")
                 continue
-    
-    # Now fetch upload dates for each video (this is slower but more reliable)
-    ydl_opts_single = {
-        'quiet': True,
-        'no_warnings': True,
-        'extract_flat': False,  # Get full info for upload date
-        'skip_download': True,
-    }
-    
-    with yt_dlp.YoutubeDL(ydl_opts_single) as ydl:
-        for video in all_videos:
-            try:
-                video_info = ydl.extract_info(video['url'], download=False)
-                video['upload_date'] = video_info.get('upload_date')
-            except:
-                video['upload_date'] = None
                 
     return all_videos
 
@@ -275,32 +263,4 @@ else:
                         st.caption("Summarize:")
                         st.link_button("Go to Gemini 💎", GEM_URL)
                 
-                # Column 6: Transcript (On-Demand)
-                with c6:
-                    # Create unique key for this video
-                    transcript_key = f"transcript_{v['id']}"
-                    
-                    # Fetch button
-                    if st.button("📄", key=f"btn_{v['id']}_{i}", help="Fetch Transcript"):
-                        with st.spinner("Fetching..."):
-                            content = get_transcript(v['url'])
-                            if content and len(content.strip()) > 0:
-                                st.session_state.transcripts[transcript_key] = content
-                            else:
-                                st.session_state.transcripts[transcript_key] = "ERROR"
-                    
-                    # Show download button if transcript is available
-                    if transcript_key in st.session_state.transcripts:
-                        if st.session_state.transcripts[transcript_key] == "ERROR":
-                            st.error("N/A")
-                        else:
-                            st.download_button(
-                                label="💾",
-                                data=f"# {v['title']}\n\n{st.session_state.transcripts[transcript_key]}",
-                                file_name=f"transcript_{v['id']}.md",
-                                mime="text/markdown",
-                                key=f"dl_{v['id']}_{i}"
-                            )
-
-                if i < len(channel_videos) - 1:
-                     st.markdown("<hr style='margin: 5px 0; opacity: 0.1;'>", unsafe_allow_html=True)
+                # Column 6: Tra
