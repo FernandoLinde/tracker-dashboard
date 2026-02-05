@@ -25,6 +25,31 @@ def get_transcript(video_url):
         ytt_api = YouTubeTranscriptApi()
         preferred_languages = ['pt', 'pt-BR', 'en', 'en-US', 'es', 'fr', 'de']
 
+import streamlit as st
+import yt_dlp
+import datetime
+from itertools import groupby
+from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound, VideoUnavailable
+
+# --- HELPER FUNCTIONS ---
+
+def get_transcript(video_url):
+    """Fetches transcript text from manual, generated, or translated tracks."""
+    try:
+        # Extract video ID from URL
+        if 'v=' in video_url:
+            video_id = video_url.split('v=')[-1].split('&')[0]
+        elif 'youtu.be/' in video_url:
+            video_id = video_url.split('youtu.be/')[-1].split('?')[0]
+        else:
+            video_id = video_url
+
+        ytt_api = YouTubeTranscriptApi()
+
+        preferred_languages = ['pt', 'pt-BR', 'en', 'en-US', 'es', 'fr', 'de']
+
+        # 1) Direct fetch with preferred languages
         try:
             fetched_transcript = ytt_api.fetch(video_id, languages=preferred_languages)
         except NoTranscriptFound:
@@ -33,6 +58,11 @@ def get_transcript(video_url):
         if fetched_transcript is None:
             transcript_list = ytt_api.list(video_id)
 
+        # 2) Fallback: discover available transcripts and fetch best candidate
+        if fetched_transcript is None:
+            transcript_list = ytt_api.list(video_id)
+
+            # 2a) Manual transcripts first
             for lang in preferred_languages:
                 try:
                     fetched_transcript = transcript_list.find_manually_created_transcript([lang]).fetch()
@@ -40,6 +70,7 @@ def get_transcript(video_url):
                 except NoTranscriptFound:
                     continue
 
+            # 2b) Generated transcripts next
             if fetched_transcript is None:
                 for lang in preferred_languages:
                     try:
@@ -48,6 +79,7 @@ def get_transcript(video_url):
                     except NoTranscriptFound:
                         continue
 
+            # 2c) Translation fallback from any available transcript to English
             if fetched_transcript is None:
                 for transcript in transcript_list:
                     if transcript.is_translatable:
@@ -131,6 +163,24 @@ def parse_upload_datetime(upload_date, timestamp):
         try:
             return datetime.datetime.strptime(upload_date, "%Y%m%d")
         except Exception:
+def format_views(views):
+    if not views: return "-"
+    if views >= 1_000_000: return f"{views/1_000_000:.1f}M"
+    if views >= 1_000: return f"{views/1_000:.0f}K"
+    return str(views)
+
+def format_duration(seconds):
+    if not seconds: return "-"
+    try:
+        return str(datetime.timedelta(seconds=int(seconds)))
+    except:
+        return "-"
+
+def format_upload_date(upload_date, timestamp):
+    if upload_date:
+        try:
+            return datetime.datetime.strptime(upload_date, "%Y%m%d").strftime("%Y-%m-%d")
+        except:
             pass
 
     if timestamp:
@@ -166,6 +216,29 @@ def enrich_video_metadata(ydl, video_id, fallback_upload_date=None, fallback_tim
     except Exception:
         return None, None
 
+            return datetime.datetime.fromtimestamp(int(timestamp)).strftime("%Y-%m-%d")
+        except:
+            pass
+
+    return "-"
+
+
+def enrich_video_metadata(ydl, video_id, fallback_upload_date=None, fallback_timestamp=None):
+    """Fetches upload metadata when flat extraction does not provide it."""
+    upload_date = fallback_upload_date
+    timestamp = fallback_timestamp
+
+    if upload_date or timestamp:
+        return upload_date, timestamp
+
+    try:
+        details = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
+        upload_date = details.get('upload_date')
+        timestamp = details.get('timestamp')
+    except Exception:
+        return None, None
+
+    return upload_date, timestamp
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Executive Tracker", page_icon="📊", layout="wide")
@@ -173,6 +246,7 @@ st.set_page_config(page_title="Executive Tracker", page_icon="📊", layout="wid
 # --- CSS STYLING ---
 st.markdown(
     """
+st.markdown("""
 <style>
     .stExpander {
         background-color: #0E1117 !important;
@@ -185,11 +259,13 @@ st.markdown(
     }
     .block-container {
         padding-top: 3rem;
+        padding-top: 3rem; 
         padding-bottom: 5rem;
     }
     div[data-testid="column"] {
         display: flex;
         align-items: center;
+        align-items: center; 
     }
     div[data-testid="stVerticalBlock"] > div {
         margin-bottom: -5px;
@@ -201,6 +277,10 @@ st.markdown(
 
 # --- CONFIGURATION ---
 GEM_URL = "https://gemini.google.com/gem/1HTDzIGbVXIA7dJodfgK3jahP3sayuWWl?usp=sharing"
+""", unsafe_allow_html=True)
+
+# --- CONFIGURATION ---
+GEM_URL = "https://gemini.google.com/gem/1HTDzIGbVXIA7dJodfgK3jahP3sayuWWl?usp=sharing" 
 
 CATEGORIES = {
     "Tech": [
@@ -219,12 +299,14 @@ CATEGORIES = {
         "https://www.youtube.com/@MarinaWyssAI/videos",
         "https://www.youtube.com/@EverydayAI_/videos",
         "https://www.youtube.com/@CanalTech/videos",
+        "https://www.youtube.com/@CanalTech/videos"
     ],
     "Macro": [
         "https://www.youtube.com/@BobEUnlimited/videos",
         "https://www.youtube.com/@macrovoices7508/videos",
         "https://www.youtube.com/@EconomistaSincero/videos",
         "https://www.youtube.com/@RichRP/videos",
+        "https://www.youtube.com/@RichRP/videos"
     ],
     "Geral": [
         "https://www.youtube.com/@StockPickers/videos",
@@ -239,6 +321,10 @@ CATEGORIES = {
 }
 
 
+        "https://www.youtube.com/@Podpah/videos"
+    ]
+}
+
 # --- DATA ENGINE ---
 @st.cache_data(ttl=3600)
 def get_channel_data(category_name):
@@ -248,6 +334,10 @@ def get_channel_data(category_name):
     ydl_opts = {
         'extract_flat': True,
         'playlist_items': '1-7',
+    
+    ydl_opts = {
+        'extract_flat': True,          
+        'playlist_items': '1-7',      
         'lazy_playlist': True,
         'quiet': True,
         'no_warnings': True,
@@ -261,6 +351,7 @@ def get_channel_data(category_name):
             if not clean_url.endswith('/videos'):
                 clean_url += '/videos'
 
+            
             try:
                 info = ydl.extract_info(clean_url, download=False)
                 entries = info.get('entries', [])
@@ -283,6 +374,19 @@ def get_channel_data(category_name):
 
                     all_videos.append(
                         {
+                    if v:
+                        vid_id = v.get('id')
+                        if not vid_id:
+                            continue
+
+                        upload_date, timestamp = enrich_video_metadata(
+                            ydl,
+                            vid_id,
+                            fallback_upload_date=v.get('upload_date'),
+                            fallback_timestamp=v.get('timestamp')
+                        )
+
+                        all_videos.append({
                             'channel': channel_title,
                             'channel_url': channel_url,
                             'title': v.get('title'),
@@ -298,6 +402,12 @@ def get_channel_data(category_name):
                 continue
     return all_videos
 
+
+                            'id': vid_id
+                        })
+            except:
+                continue
+    return all_videos
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -315,6 +425,14 @@ with st.sidebar:
 st.title(f"📺 {selected_category}")
 
 with st.spinner("Updating Intelligence..."):
+    
+    st.divider()
+    st.caption("💡 Using official YouTube Transcript API")
+
+# --- MAIN CONTENT ---
+st.title(f"📺 {selected_category}")
+
+with st.spinner(f"Updating Intelligence..."):
     videos = get_channel_data(selected_category)
 
 if not videos:
@@ -333,6 +451,11 @@ else:
             h0.markdown("<small style='color:grey'>SUMM</small>", unsafe_allow_html=True)
             h1.markdown("<small style='color:grey'>VIDEO TITLE</small>", unsafe_allow_html=True)
             h2.markdown("<small style='color:grey'>AGE</small>", unsafe_allow_html=True)
+            
+            # Layout Columns
+            h1, h2, h3, h4, h5, h6 = st.columns([4, 1, 1, 1, 1, 1])
+            h1.markdown("<small style='color:grey'>VIDEO TITLE</small>", unsafe_allow_html=True)
+            h2.markdown("<small style='color:grey'>DATE</small>", unsafe_allow_html=True)
             h3.markdown("<small style='color:grey'>VIEWS</small>", unsafe_allow_html=True)
             h4.markdown("<small style='color:grey'>LENGTH</small>", unsafe_allow_html=True)
             h5.markdown("<small style='color:grey'>EXTRA</small>", unsafe_allow_html=True)
@@ -366,6 +489,21 @@ else:
                 c3.write(format_views(v['views']))
                 c4.write(format_duration(v['duration']))
 
+            
+            st.divider()
+
+            for i, v in enumerate(channel_videos):
+                c1, c2, c3, c4, c5, c6 = st.columns([4, 1, 1, 1, 1, 1])
+                
+                # Column 1: Title
+                c1.markdown(f"[{v['title']}]({v['url']})", unsafe_allow_html=True)
+                
+                # Column 2 & 3: Metrics
+                c2.write(format_upload_date(v.get('upload_date'), v.get('timestamp')))
+                c3.write(format_views(v['views']))
+                c4.write(format_duration(v['duration']))
+                
+                # Column 4: Popover
                 with c5:
                     with st.popover("✨"):
                         st.caption("Copy Link:")
@@ -392,3 +530,23 @@ else:
 
                 if i < len(channel_videos) - 1:
                     st.markdown("<hr style='margin: 5px 0; opacity: 0.1;'>", unsafe_allow_html=True)
+                
+                # Column 5: Transcript (On-Demand)
+                with c6:
+                    if st.button("📄", key=f"btn_{v['id']}_{i}", help="Fetch Transcript"):
+                        with st.spinner("Fetching..."):
+                            content = get_transcript(v['url'])
+                        
+                        if content and len(content.strip()) > 0:
+                            st.download_button(
+                                label="💾",
+                                data=f"# {v['title']}\n\n{content}",
+                                file_name=f"transcript_{v['id']}.md",
+                                mime="text/markdown",
+                                key=f"dl_{v['id']}_{i}"
+                            )
+                        else:
+                            st.error("N/A")
+
+                if i < len(channel_videos) - 1:
+                     st.markdown("<hr style='margin: 5px 0; opacity: 0.1;'>", unsafe_allow_html=True)
