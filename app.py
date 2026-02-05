@@ -21,13 +21,11 @@ def get_transcript(video_url):
         # Initialize the API
         ytt_api = YouTubeTranscriptApi()
         
-        # Try to fetch transcript with language preferences
-        try:
-            # First try with Portuguese and English
-            fetched_transcript = ytt_api.fetch(video_id, languages=['pt', 'pt-BR', 'en', 'en-US'])
-        except:
-            # If that fails, just try to get any transcript
-            fetched_transcript = ytt_api.fetch(video_id)
+        # Try a broader language preference list.
+        fetched_transcript = ytt_api.fetch(
+            video_id,
+            languages=['pt', 'pt-BR', 'en', 'en-US', 'es', 'fr', 'de']
+        )
         
         # Convert to text format
         full_text = "\n".join([snippet.text for snippet in fetched_transcript])
@@ -58,6 +56,21 @@ def format_duration(seconds):
         return str(datetime.timedelta(seconds=int(seconds)))
     except:
         return "-"
+
+def format_upload_date(upload_date, timestamp):
+    if upload_date:
+        try:
+            return datetime.datetime.strptime(upload_date, "%Y%m%d").strftime("%Y-%m-%d")
+        except:
+            pass
+
+    if timestamp:
+        try:
+            return datetime.datetime.fromtimestamp(int(timestamp)).strftime("%Y-%m-%d")
+        except:
+            pass
+
+    return "-"
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Executive Tracker", page_icon="📊", layout="wide")
@@ -163,6 +176,8 @@ def get_channel_data(category_name):
                             'url': f"https://www.youtube.com/watch?v={vid_id}",
                             'views': v.get('view_count'),
                             'duration': v.get('duration'),
+                            'upload_date': v.get('upload_date'),
+                            'timestamp': v.get('timestamp'),
                             'id': vid_id
                         })
             except:
@@ -199,8 +214,9 @@ else:
             st.markdown(f"🔗 [**Open Channel**]({c_url})")
             
             # Layout Columns
-            h1, h3, h4, h5, h6 = st.columns([5, 1, 1, 1, 1])
+            h1, h2, h3, h4, h5, h6 = st.columns([4, 1, 1, 1, 1, 1])
             h1.markdown("<small style='color:grey'>VIDEO TITLE</small>", unsafe_allow_html=True)
+            h2.markdown("<small style='color:grey'>DATE</small>", unsafe_allow_html=True)
             h3.markdown("<small style='color:grey'>VIEWS</small>", unsafe_allow_html=True)
             h4.markdown("<small style='color:grey'>LENGTH</small>", unsafe_allow_html=True)
             h5.markdown("<small style='color:grey'>EXTRA</small>", unsafe_allow_html=True)
@@ -209,12 +225,13 @@ else:
             st.divider()
 
             for i, v in enumerate(channel_videos):
-                c1, c3, c4, c5, c6 = st.columns([5, 1, 1, 1, 1])
+                c1, c2, c3, c4, c5, c6 = st.columns([4, 1, 1, 1, 1, 1])
                 
                 # Column 1: Title
                 c1.markdown(f"[{v['title']}]({v['url']})", unsafe_allow_html=True)
                 
                 # Column 2 & 3: Metrics
+                c2.write(format_upload_date(v.get('upload_date'), v.get('timestamp')))
                 c3.write(format_views(v['views']))
                 c4.write(format_duration(v['duration']))
                 
