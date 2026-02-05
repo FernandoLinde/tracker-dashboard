@@ -25,7 +25,7 @@ def _fetch_transcript_list(api, video_id):
     if hasattr(YouTubeTranscriptApi, "list_transcripts"):
         return YouTubeTranscriptApi.list_transcripts(video_id)
 
-    raise NoTranscriptFound(video_id, [], "No transcript list API available")
+    return None
 
 
 def get_transcript(video_url):
@@ -43,6 +43,8 @@ def get_transcript(video_url):
 
         if fetched_transcript is None:
             transcript_list = _fetch_transcript_list(ytt_api, video_id)
+            if transcript_list is None:
+                return None
 
             for lang in preferred_languages:
                 try:
