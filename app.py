@@ -8,7 +8,7 @@ from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFoun
 # --- HELPER FUNCTIONS ---
 
 def get_transcript(video_url):
-    """Fetches transcript using the official youtube-transcript-api."""
+    """Fetches transcript text from manual, generated, or translated tracks."""
     try:
         # Extract video ID from URL
         if 'v=' in video_url:
@@ -17,22 +17,53 @@ def get_transcript(video_url):
             video_id = video_url.split('youtu.be/')[-1].split('?')[0]
         else:
             video_id = video_url
-        
-        # Initialize the API
+
         ytt_api = YouTubeTranscriptApi()
-        
-        # Try to fetch transcript with language preferences
+
+        preferred_languages = ['pt', 'pt-BR', 'en', 'en-US', 'es', 'fr', 'de']
+
+        # 1) Direct fetch with preferred languages
         try:
-            # First try with Portuguese and English
-            fetched_transcript = ytt_api.fetch(video_id, languages=['pt', 'pt-BR', 'en', 'en-US'])
-        except:
-            # If that fails, just try to get any transcript
-            fetched_transcript = ytt_api.fetch(video_id)
-        
-        # Convert to text format
-        full_text = "\n".join([snippet.text for snippet in fetched_transcript])
-        return full_text
-        
+            fetched_transcript = ytt_api.fetch(video_id, languages=preferred_languages)
+        except NoTranscriptFound:
+            fetched_transcript = None
+
+        # 2) Fallback: discover available transcripts and fetch best candidate
+        if fetched_transcript is None:
+            transcript_list = ytt_api.list(video_id)
+
+            # 2a) Manual transcripts first
+            for lang in preferred_languages:
+                try:
+                    fetched_transcript = transcript_list.find_manually_created_transcript([lang]).fetch()
+                    break
+                except NoTranscriptFound:
+                    continue
+
+            # 2b) Generated transcripts next
+            if fetched_transcript is None:
+                for lang in preferred_languages:
+                    try:
+                        fetched_transcript = transcript_list.find_generated_transcript([lang]).fetch()
+                        break
+                    except NoTranscriptFound:
+                        continue
+
+            # 2c) Translation fallback from any available transcript to English
+            if fetched_transcript is None:
+                for transcript in transcript_list:
+                    if transcript.is_translatable:
+                        try:
+                            fetched_transcript = transcript.translate('en').fetch()
+                            break
+                        except Exception:
+                            continue
+
+        if fetched_transcript is None:
+            return None
+
+        return "\n".join([snippet.text for snippet in fetched_transcript])
+
     except TranscriptsDisabled:
         print(f"Transcripts are disabled for video: {video_id}")
         return None
@@ -58,6 +89,39 @@ def format_duration(seconds):
         return str(datetime.timedelta(seconds=int(seconds)))
     except:
         return "-"
+
+def format_upload_date(upload_date, timestamp):
+    if upload_date:
+        try:
+            return datetime.datetime.strptime(upload_date, "%Y%m%d").strftime("%Y-%m-%d")
+        except:
+            pass
+
+    if timestamp:
+        try:
+            return datetime.datetime.fromtimestamp(int(timestamp)).strftime("%Y-%m-%d")
+        except:
+            pass
+
+    return "-"
+
+
+def enrich_video_metadata(ydl, video_id, fallback_upload_date=None, fallback_timestamp=None):
+    """Fetches upload metadata when flat extraction does not provide it."""
+    upload_date = fallback_upload_date
+    timestamp = fallback_timestamp
+
+    if upload_date or timestamp:
+        return upload_date, timestamp
+
+    try:
+        details = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
+        upload_date = details.get('upload_date')
+        timestamp = details.get('timestamp')
+    except Exception:
+        return None, None
+
+    return upload_date, timestamp
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Executive Tracker", page_icon="📊", layout="wide")
@@ -140,6 +204,7 @@ def get_channel_data(category_name):
         'quiet': True,
         'no_warnings': True,
         'ignoreerrors': True,
+        'skip_download': True,
     }
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -156,6 +221,16 @@ def get_channel_data(category_name):
                 for v in entries:
                     if v:
                         vid_id = v.get('id')
+                        if not vid_id:
+                            continue
+
+                        upload_date, timestamp = enrich_video_metadata(
+                            ydl,
+                            vid_id,
+                            fallback_upload_date=v.get('upload_date'),
+                            fallback_timestamp=v.get('timestamp')
+                        )
+
                         all_videos.append({
                             'channel': channel_title,
                             'channel_url': channel_url,
@@ -163,6 +238,8 @@ def get_channel_data(category_name):
                             'url': f"https://www.youtube.com/watch?v={vid_id}",
                             'views': v.get('view_count'),
                             'duration': v.get('duration'),
+                            'upload_date': upload_date,
+                            'timestamp': timestamp,
                             'id': vid_id
                         })
             except:
@@ -199,8 +276,9 @@ else:
             st.markdown(f"🔗 [**Open Channel**]({c_url})")
             
             # Layout Columns
-            h1, h3, h4, h5, h6 = st.columns([5, 1, 1, 1, 1])
+            h1, h2, h3, h4, h5, h6 = st.columns([4, 1, 1, 1, 1, 1])
             h1.markdown("<small style='color:grey'>VIDEO TITLE</small>", unsafe_allow_html=True)
+            h2.markdown("<small style='color:grey'>DATE</small>", unsafe_allow_html=True)
             h3.markdown("<small style='color:grey'>VIEWS</small>", unsafe_allow_html=True)
             h4.markdown("<small style='color:grey'>LENGTH</small>", unsafe_allow_html=True)
             h5.markdown("<small style='color:grey'>EXTRA</small>", unsafe_allow_html=True)
@@ -209,12 +287,13 @@ else:
             st.divider()
 
             for i, v in enumerate(channel_videos):
-                c1, c3, c4, c5, c6 = st.columns([5, 1, 1, 1, 1])
+                c1, c2, c3, c4, c5, c6 = st.columns([4, 1, 1, 1, 1, 1])
                 
                 # Column 1: Title
                 c1.markdown(f"[{v['title']}]({v['url']})", unsafe_allow_html=True)
                 
                 # Column 2 & 3: Metrics
+                c2.write(format_upload_date(v.get('upload_date'), v.get('timestamp')))
                 c3.write(format_views(v['views']))
                 c4.write(format_duration(v['duration']))
                 
