@@ -19,6 +19,7 @@ st.set_page_config(page_title="Executive Tracker", page_icon=":bar_chart:", layo
 GEM_URL = "https://gemini.google.com/gem/1HTDzIGbVXIA7dJodfgK3jahP3sayuWWl?usp=sharing"
 MAX_VIDEOS_PER_CHANNEL = 5
 PREFERRED_LANGUAGES = ["pt-BR", "pt", "en", "en-US"]
+REQUEST_TIMEOUT_SECONDS = 15
 
 CATEGORIES = {
     "Tech": [
@@ -390,23 +391,34 @@ def get_channel_data(category_name):
     errors = []
     seen_video_ids = set()
 
-    ydl_opts = {
+    flat_opts = {
+        "extract_flat": True,
         "playlist_items": f"1-{MAX_VIDEOS_PER_CHANNEL}",
         "lazy_playlist": True,
         "quiet": True,
         "no_warnings": True,
         "ignoreerrors": True,
         "skip_download": True,
+        "socket_timeout": REQUEST_TIMEOUT_SECONDS,
+        "retries": 1,
+    }
+    detail_opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "ignoreerrors": True,
+        "skip_download": True,
+        "socket_timeout": REQUEST_TIMEOUT_SECONDS,
+        "retries": 1,
     }
 
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+    with yt_dlp.YoutubeDL(flat_opts) as flat_ydl, yt_dlp.YoutubeDL(detail_opts) as detail_ydl:
         for channel_url in channels:
             clean_url = channel_url.rstrip("/")
             if not clean_url.endswith("/videos"):
                 clean_url += "/videos"
 
             try:
-                info = ydl.extract_info(clean_url, download=False)
+                info = flat_ydl.extract_info(clean_url, download=False)
                 if not info:
                     errors.append(f"Channel failed: {clean_url}")
                     continue
@@ -429,18 +441,17 @@ def get_channel_data(category_name):
                     duration = entry.get("duration")
                     title = entry.get("title") or "Untitled"
 
-                    needs_detail = not upload_date or not timestamp or views is None or not duration
-                    if needs_detail:
-                        try:
-                            detail = ydl.extract_info(video_url, download=False)
-                        except Exception:
-                            detail = None
-                        if detail:
-                            upload_date = upload_date or detail.get("upload_date")
-                            timestamp = timestamp or detail.get("timestamp")
-                            views = views if views is not None else detail.get("view_count")
-                            duration = duration or detail.get("duration")
-                            title = title if title != "Untitled" else (detail.get("title") or title)
+                    try:
+                        detail = detail_ydl.extract_info(video_url, download=False)
+                    except Exception:
+                        detail = None
+                    if detail:
+                        upload_date = upload_date or detail.get("upload_date")
+                        timestamp = timestamp or detail.get("timestamp")
+                        views = views if views is not None else detail.get("view_count")
+                        duration = duration or detail.get("duration")
+                        if title == "Untitled":
+                            title = detail.get("title") or title
 
                     seen_video_ids.add(video_id)
                     all_videos.append(
@@ -458,6 +469,51 @@ def get_channel_data(category_name):
                     )
             except Exception as exc:
                 errors.append(f"Channel failed: {clean_url} ({type(exc).__name__})")
+
+    # Full extraction fallback when all channels returned empty.
+    if not all_videos:
+        fallback_opts = {
+            "playlist_items": f"1-{MAX_VIDEOS_PER_CHANNEL}",
+            "lazy_playlist": True,
+            "quiet": True,
+            "no_warnings": True,
+            "ignoreerrors": True,
+            "skip_download": True,
+            "socket_timeout": REQUEST_TIMEOUT_SECONDS,
+            "retries": 1,
+        }
+        with yt_dlp.YoutubeDL(fallback_opts) as ydl:
+            for channel_url in channels:
+                clean_url = channel_url.rstrip("/")
+                if not clean_url.endswith("/videos"):
+                    clean_url += "/videos"
+
+                try:
+                    info = ydl.extract_info(clean_url, download=False)
+                    entries = info.get("entries") or []
+                    channel_title = info.get("channel") or info.get("title") or clean_url.split("@")[-1]
+                    for entry in entries:
+                        if not entry:
+                            continue
+                        video_id = entry.get("id") or extract_video_id(entry.get("url"))
+                        if not video_id or video_id in seen_video_ids:
+                            continue
+                        seen_video_ids.add(video_id)
+                        all_videos.append(
+                            {
+                                "id": video_id,
+                                "channel": channel_title,
+                                "title": entry.get("title") or "Untitled",
+                                "url": entry.get("webpage_url") or f"https://www.youtube.com/watch?v={video_id}",
+                                "views": entry.get("view_count"),
+                                "duration": entry.get("duration"),
+                                "upload_date": entry.get("upload_date"),
+                                "timestamp": entry.get("timestamp"),
+                                "sort_ts": _sort_timestamp(entry.get("upload_date"), entry.get("timestamp")),
+                            }
+                        )
+                except Exception as exc:
+                    errors.append(f"Fallback failed: {clean_url} ({type(exc).__name__})")
 
     all_videos.sort(key=lambda item: item.get("sort_ts", 0), reverse=True)
     return all_videos, errors
@@ -544,6 +600,13 @@ if selected_video and selected_video.get("url"):
 
 if not videos:
     st.error("No videos found for this category.")
+    if st.button("Retry Channel Fetch", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
+    if fetch_errors:
+        st.warning("Some channels returned errors. See details below.")
+        for issue in fetch_errors[:8]:
+            st.write(f"- {issue}")
 else:
     cols = st.columns([2, 1.2, 4.8, 1, 1, 1])
     cols[0].markdown("**Channel**")
