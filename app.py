@@ -17,32 +17,75 @@ def extract_video_id(video_url):
     return video_url
 
 
-def _fetch_transcript_list(api, video_id):
-    """Support both new and old youtube-transcript-api interfaces."""
-    if hasattr(api, "list"):
+def _get_api_instance():
+    try:
+        return YouTubeTranscriptApi()
+    except Exception:
+        return None
+
+
+def _fetch_transcript_list(video_id):
+    """Support multiple youtube-transcript-api versions."""
+    api = _get_api_instance()
+
+    if api and hasattr(api, 'list'):
         return api.list(video_id)
 
-    if hasattr(YouTubeTranscriptApi, "list_transcripts"):
+    if hasattr(YouTubeTranscriptApi, 'list_transcripts'):
         return YouTubeTranscriptApi.list_transcripts(video_id)
 
     return None
 
 
+def _direct_fetch_transcript(video_id, languages):
+    """Direct transcript fetch that supports both API styles."""
+    api = _get_api_instance()
+
+    if api and hasattr(api, 'fetch'):
+        return api.fetch(video_id, languages=languages)
+
+    # Older versions
+    if hasattr(YouTubeTranscriptApi, 'get_transcript'):
+        return YouTubeTranscriptApi.get_transcript(video_id, languages=languages)
+
+    return None
+
+
+def _normalize_transcript_text(fetched_transcript):
+    if not fetched_transcript:
+        return None
+
+    parts = []
+    for snippet in fetched_transcript:
+        if hasattr(snippet, 'text'):
+            text = snippet.text
+        elif isinstance(snippet, dict):
+            text = snippet.get('text')
+        else:
+            text = None
+
+        if text:
+            parts.append(text)
+
+    combined = "\n".join(parts).strip()
+    return combined if combined else None
+
+
 def get_transcript(video_url):
     """Fetch transcript text from manual, generated, or translated tracks."""
     video_id = extract_video_id(video_url)
+    preferred_languages = ['pt', 'pt-BR', 'en', 'en-US', 'es', 'fr', 'de']
 
     try:
-        ytt_api = YouTubeTranscriptApi()
-        preferred_languages = ['pt', 'pt-BR', 'en', 'en-US', 'es', 'fr', 'de']
+        fetched_transcript = None
 
         try:
-            fetched_transcript = ytt_api.fetch(video_id, languages=preferred_languages)
+            fetched_transcript = _direct_fetch_transcript(video_id, preferred_languages)
         except NoTranscriptFound:
             fetched_transcript = None
 
         if fetched_transcript is None:
-            transcript_list = _fetch_transcript_list(ytt_api, video_id)
+            transcript_list = _fetch_transcript_list(video_id)
             if transcript_list is None:
                 return None
 
@@ -63,17 +106,14 @@ def get_transcript(video_url):
 
             if fetched_transcript is None:
                 for transcript in transcript_list:
-                    if transcript.is_translatable:
+                    if getattr(transcript, 'is_translatable', False):
                         try:
                             fetched_transcript = transcript.translate('en').fetch()
                             break
                         except Exception:
                             continue
 
-        if fetched_transcript is None:
-            return None
-
-        return "\n".join([snippet.text for snippet in fetched_transcript])
+        return _normalize_transcript_text(fetched_transcript)
 
     except TranscriptsDisabled:
         print(f"Transcripts are disabled for video: {video_id}")
@@ -95,10 +135,13 @@ def summarize_transcript(transcript_text, max_points=4):
         return []
 
     cleaned = re.sub(r'\s+', ' ', transcript_text).strip()
-    sentences = re.split(r'(?<=[.!?])\s+', cleaned)
+    if not cleaned:
+        return []
 
+    sentences = re.split(r'(?<=[.!?])\s+', cleaned)
     bullets = []
     seen = set()
+
     for sentence in sentences:
         s = sentence.strip(' -•\n\t')
         if len(s) < 35:
@@ -115,7 +158,21 @@ def summarize_transcript(transcript_text, max_points=4):
         seen.add(normalized)
 
         if len(bullets) >= max_points:
-            break
+            return bullets
+
+    # Fallback when punctuation is sparse: chunk by words
+    if not bullets:
+        words = cleaned.split()
+        chunk_size = max(20, min(40, len(words) // max_points if len(words) > max_points else 20))
+        for i in range(0, len(words), chunk_size):
+            chunk = " ".join(words[i:i + chunk_size]).strip()
+            if len(chunk) < 35:
+                continue
+            if len(chunk) > 180:
+                chunk = chunk[:177].rstrip() + '...'
+            bullets.append(f"- {chunk}")
+            if len(bullets) >= max_points:
+                break
 
     return bullets
 
@@ -169,7 +226,7 @@ def format_upload_age(upload_date, timestamp):
 
 
 def enrich_video_metadata(ydl, video_id, fallback_upload_date=None, fallback_timestamp=None):
-    """Fetch upload metadata when flat extraction does not provide it."""
+    """Fetch upload metadata when listing extraction omits it."""
     if fallback_upload_date or fallback_timestamp:
         return fallback_upload_date, fallback_timestamp
 
@@ -258,8 +315,9 @@ def get_channel_data(category_name):
     channels = CATEGORIES[category_name]
     all_videos = []
 
+    # Not using flat mode to improve upload date / timestamp availability.
     ydl_opts = {
-        'extract_flat': True,
+        'extract_flat': False,
         'playlist_items': '1-7',
         'lazy_playlist': True,
         'quiet': True,
