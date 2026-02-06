@@ -7,9 +7,10 @@ import yt_dlp
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api._errors import NoTranscriptFound, TranscriptsDisabled, VideoUnavailable
 
-# --- HELPER FUNCTIONS ---
 
-def extract_video_id(video_url):
+# --- HELPERS ---
+
+def extract_video_id(video_url: str) -> str:
     if 'v=' in video_url:
         return video_url.split('v=')[-1].split('&')[0]
     if 'youtu.be/' in video_url:
@@ -17,16 +18,15 @@ def extract_video_id(video_url):
     return video_url
 
 
-def _get_api_instance():
+def get_ytt_api_instance():
     try:
         return YouTubeTranscriptApi()
     except Exception:
         return None
 
 
-def _fetch_transcript_list(video_id):
-    """Support multiple youtube-transcript-api versions."""
-    api = _get_api_instance()
+def fetch_transcript_list(video_id: str):
+    api = get_ytt_api_instance()
 
     if api and hasattr(api, 'list'):
         return api.list(video_id)
@@ -37,100 +37,92 @@ def _fetch_transcript_list(video_id):
     return None
 
 
-def _direct_fetch_transcript(video_id, languages):
-    """Direct transcript fetch that supports both API styles."""
-    api = _get_api_instance()
+def direct_fetch_transcript(video_id: str, languages):
+    api = get_ytt_api_instance()
 
     if api and hasattr(api, 'fetch'):
         return api.fetch(video_id, languages=languages)
 
-    # Older versions
     if hasattr(YouTubeTranscriptApi, 'get_transcript'):
         return YouTubeTranscriptApi.get_transcript(video_id, languages=languages)
 
     return None
 
 
-def _normalize_transcript_text(fetched_transcript):
-    if not fetched_transcript:
+def transcript_to_text(transcript_payload):
+    if not transcript_payload:
         return None
 
     parts = []
-    for snippet in fetched_transcript:
-        if hasattr(snippet, 'text'):
-            text = snippet.text
-        elif isinstance(snippet, dict):
-            text = snippet.get('text')
+    for item in transcript_payload:
+        if hasattr(item, 'text'):
+            value = item.text
+        elif isinstance(item, dict):
+            value = item.get('text')
         else:
-            text = None
+            value = None
 
-        if text:
-            parts.append(text)
+        if value:
+            parts.append(str(value).strip())
 
-    combined = "\n".join(parts).strip()
-    return combined if combined else None
+    merged = "\n".join([p for p in parts if p]).strip()
+    return merged if merged else None
 
 
-def get_transcript(video_url):
-    """Fetch transcript text from manual, generated, or translated tracks."""
+def get_transcript(video_url: str):
     video_id = extract_video_id(video_url)
     preferred_languages = ['pt', 'pt-BR', 'en', 'en-US', 'es', 'fr', 'de']
 
     try:
-        fetched_transcript = None
+        fetched = None
 
         try:
-            fetched_transcript = _direct_fetch_transcript(video_id, preferred_languages)
+            fetched = direct_fetch_transcript(video_id, preferred_languages)
         except NoTranscriptFound:
-            fetched_transcript = None
+            fetched = None
 
-        if fetched_transcript is None:
-            transcript_list = _fetch_transcript_list(video_id)
+        if fetched is None:
+            transcript_list = fetch_transcript_list(video_id)
             if transcript_list is None:
                 return None
 
             for lang in preferred_languages:
                 try:
-                    fetched_transcript = transcript_list.find_manually_created_transcript([lang]).fetch()
+                    fetched = transcript_list.find_manually_created_transcript([lang]).fetch()
                     break
                 except NoTranscriptFound:
                     continue
 
-            if fetched_transcript is None:
+            if fetched is None:
                 for lang in preferred_languages:
                     try:
-                        fetched_transcript = transcript_list.find_generated_transcript([lang]).fetch()
+                        fetched = transcript_list.find_generated_transcript([lang]).fetch()
                         break
                     except NoTranscriptFound:
                         continue
 
-            if fetched_transcript is None:
+            if fetched is None:
                 for transcript in transcript_list:
                     if getattr(transcript, 'is_translatable', False):
                         try:
-                            fetched_transcript = transcript.translate('en').fetch()
+                            fetched = transcript.translate('en').fetch()
                             break
                         except Exception:
                             continue
 
-        return _normalize_transcript_text(fetched_transcript)
+        return transcript_to_text(fetched)
 
     except TranscriptsDisabled:
-        print(f"Transcripts are disabled for video: {video_id}")
         return None
     except NoTranscriptFound:
-        print(f"No transcript found for video: {video_id}")
         return None
     except VideoUnavailable:
-        print(f"Video is unavailable: {video_id}")
         return None
-    except Exception as e:
-        print(f"Error fetching transcript: {type(e).__name__} - {str(e)}")
+    except Exception:
         return None
 
 
-def summarize_transcript(transcript_text, max_points=4):
-    """Create a compact 3-4 bullet summary from transcript text."""
+def summarize_transcript(transcript_text: str, max_points=4):
     if not transcript_text:
         return []
 
@@ -138,39 +130,36 @@ def summarize_transcript(transcript_text, max_points=4):
     if not cleaned:
         return []
 
-    sentences = re.split(r'(?<=[.!?])\s+', cleaned)
     bullets = []
     seen = set()
 
-    for sentence in sentences:
+    for sentence in re.split(r'(?<=[.!?])\s+', cleaned):
         s = sentence.strip(' -•\n\t')
-        if len(s) < 35:
+        if len(s) < 40:
+            continue
+        key = s.lower()
+        if key in seen:
             continue
 
-        normalized = s.lower()
-        if normalized in seen:
-            continue
-
-        if len(s) > 180:
-            s = s[:177].rstrip() + '...'
+        if len(s) > 170:
+            s = s[:167].rstrip() + '...'
 
         bullets.append(f"- {s}")
-        seen.add(normalized)
-
+        seen.add(key)
         if len(bullets) >= max_points:
             return bullets
 
-    # Fallback when punctuation is sparse: chunk by words
+    # fallback for low punctuation transcripts
     if not bullets:
         words = cleaned.split()
-        chunk_size = max(20, min(40, len(words) // max_points if len(words) > max_points else 20))
-        for i in range(0, len(words), chunk_size):
-            chunk = " ".join(words[i:i + chunk_size]).strip()
-            if len(chunk) < 35:
+        chunk = 28
+        for i in range(0, len(words), chunk):
+            part = " ".join(words[i:i + chunk]).strip()
+            if len(part) < 40:
                 continue
-            if len(chunk) > 180:
-                chunk = chunk[:177].rstrip() + '...'
-            bullets.append(f"- {chunk}")
+            if len(part) > 170:
+                part = part[:167].rstrip() + '...'
+            bullets.append(f"- {part}")
             if len(bullets) >= max_points:
                 break
 
@@ -213,25 +202,26 @@ def parse_upload_datetime(upload_date, timestamp):
 
 
 def format_upload_age(upload_date, timestamp):
-    upload_dt = parse_upload_datetime(upload_date, timestamp)
-    if upload_dt is None:
+    dt = parse_upload_datetime(upload_date, timestamp)
+    if dt is None:
         return "-"
 
-    delta_days = max((datetime.datetime.now() - upload_dt).days, 0)
-    if delta_days == 0:
+    days = max((datetime.datetime.now() - dt).days, 0)
+    if days == 0:
         return "Today"
-    if delta_days == 1:
+    if days == 1:
         return "1 day ago"
-    return f"{delta_days} days ago"
+    return f"{days} days ago"
 
 
 def enrich_video_metadata(ydl, video_id, fallback_upload_date=None, fallback_timestamp=None):
-    """Fetch upload metadata when listing extraction omits it."""
     if fallback_upload_date or fallback_timestamp:
         return fallback_upload_date, fallback_timestamp
 
     try:
         details = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
+        if not details:
+            return None, None
         return details.get('upload_date'), details.get('timestamp')
     except Exception:
         return None, None
@@ -240,7 +230,6 @@ def enrich_video_metadata(ydl, video_id, fallback_upload_date=None, fallback_tim
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Executive Tracker", page_icon="📊", layout="wide")
 
-# --- CSS STYLING ---
 st.markdown(
     """
 <style>
@@ -269,7 +258,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# --- CONFIGURATION ---
 GEM_URL = "https://gemini.google.com/gem/1HTDzIGbVXIA7dJodfgK3jahP3sayuWWl?usp=sharing"
 
 CATEGORIES = {
@@ -309,15 +297,13 @@ CATEGORIES = {
 }
 
 
-# --- DATA ENGINE ---
 @st.cache_data(ttl=3600)
 def get_channel_data(category_name):
     channels = CATEGORIES[category_name]
     all_videos = []
 
-    # Not using flat mode to improve upload date / timestamp availability.
     ydl_opts = {
-        'extract_flat': False,
+        'extract_flat': True,
         'playlist_items': '1-7',
         'lazy_playlist': True,
         'quiet': True,
@@ -328,38 +314,37 @@ def get_channel_data(category_name):
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         for channel_url in channels:
-            clean_url = channel_url.rstrip('/')
-            if not clean_url.endswith('/videos'):
-                clean_url += '/videos'
-
             try:
-                info = ydl.extract_info(clean_url, download=False)
-                entries = info.get('entries', [])
-                channel_title = info.get('channel', clean_url.split('@')[-1])
+                info = ydl.extract_info(channel_url, download=False)
+                if not info:
+                    continue
 
-                for v in entries:
-                    if not v:
+                entries = info.get('entries', [])
+                channel_title = info.get('channel') or info.get('uploader') or channel_url.split('@')[-1].split('/')[0]
+
+                for entry in entries:
+                    if not entry:
                         continue
 
-                    vid_id = v.get('id')
+                    vid_id = entry.get('id')
                     if not vid_id:
                         continue
 
                     upload_date, timestamp = enrich_video_metadata(
                         ydl,
                         vid_id,
-                        fallback_upload_date=v.get('upload_date'),
-                        fallback_timestamp=v.get('timestamp'),
+                        fallback_upload_date=entry.get('upload_date'),
+                        fallback_timestamp=entry.get('timestamp'),
                     )
 
                     all_videos.append(
                         {
                             'channel': channel_title,
                             'channel_url': channel_url,
-                            'title': v.get('title'),
+                            'title': entry.get('title') or '(untitled)',
                             'url': f"https://www.youtube.com/watch?v={vid_id}",
-                            'views': v.get('view_count'),
-                            'duration': v.get('duration'),
+                            'views': entry.get('view_count'),
+                            'duration': entry.get('duration'),
                             'upload_date': upload_date,
                             'timestamp': timestamp,
                             'id': vid_id,
@@ -367,10 +352,10 @@ def get_channel_data(category_name):
                     )
             except Exception:
                 continue
+
     return all_videos
 
 
-# --- SIDEBAR ---
 with st.sidebar:
     st.title("📊 Menu")
     selected_category = st.radio("Select Category:", list(CATEGORIES.keys()))
@@ -379,17 +364,16 @@ with st.sidebar:
         st.rerun()
 
     st.divider()
-    st.caption("💡 Using official YouTube Transcript API")
+    st.caption("💡 Using YouTube transcript + yt-dlp")
 
 
-# --- MAIN CONTENT ---
 st.title(f"📺 {selected_category}")
 
 with st.spinner("Updating Intelligence..."):
     videos = get_channel_data(selected_category)
 
 if not videos:
-    st.error("No videos found. Check connection.")
+    st.error("No videos found. Check connection / channel URLs.")
 else:
     videos.sort(key=lambda x: x['channel'])
 
@@ -411,18 +395,18 @@ else:
 
             st.divider()
 
-            for i, v in enumerate(channel_videos):
+            for i, video in enumerate(channel_videos):
                 c0, c1, c2, c3, c4, c5, c6 = st.columns([1, 4, 1, 1, 1, 1, 1])
 
-                transcript_key = f"transcript_{v['id']}"
-                summary_key = f"summary_{v['id']}"
+                transcript_key = f"transcript_{video['id']}"
+                summary_key = f"summary_{video['id']}"
 
                 with c0:
                     with st.popover("🧠"):
                         st.caption("Quick Summary")
-                        if st.button("Generate bullets", key=f"sum_{v['id']}_{i}"):
+                        if st.button("Generate", key=f"sum_{video['id']}_{i}"):
                             with st.spinner("Building summary..."):
-                                transcript = get_transcript(v['url'])
+                                transcript = get_transcript(video['url'])
                                 st.session_state[transcript_key] = transcript
                                 st.session_state[summary_key] = summarize_transcript(transcript)
 
@@ -432,31 +416,31 @@ else:
                         elif summary_key in st.session_state:
                             st.caption("No summary available.")
 
-                c1.markdown(f"[{v['title']}]({v['url']})", unsafe_allow_html=True)
-                c2.write(format_upload_age(v.get('upload_date'), v.get('timestamp')))
-                c3.write(format_views(v['views']))
-                c4.write(format_duration(v['duration']))
+                c1.markdown(f"[{video['title']}]({video['url']})", unsafe_allow_html=True)
+                c2.write(format_upload_age(video.get('upload_date'), video.get('timestamp')))
+                c3.write(format_views(video.get('views')))
+                c4.write(format_duration(video.get('duration')))
 
                 with c5:
                     with st.popover("✨"):
                         st.caption("Copy Link:")
-                        st.code(v['url'], language="text")
-                        st.caption("Summarize:")
+                        st.code(video['url'], language="text")
+                        st.caption("External summary:")
                         st.link_button("Go to Gemini 💎", GEM_URL)
 
                 with c6:
-                    if st.button("📄", key=f"btn_{v['id']}_{i}", help="Fetch Transcript"):
-                        with st.spinner("Fetching..."):
-                            st.session_state[transcript_key] = get_transcript(v['url'])
+                    if st.button("📄", key=f"btn_{video['id']}_{i}", help="Fetch Transcript"):
+                        with st.spinner("Fetching transcript..."):
+                            st.session_state[transcript_key] = get_transcript(video['url'])
 
                     transcript_content = st.session_state.get(transcript_key)
                     if transcript_content and len(transcript_content.strip()) > 0:
                         st.download_button(
                             label="💾",
-                            data=f"# {v['title']}\n\n{transcript_content}",
-                            file_name=f"transcript_{v['id']}.md",
+                            data=f"# {video['title']}\n\n{transcript_content}",
+                            file_name=f"transcript_{video['id']}.md",
                             mime="text/markdown",
-                            key=f"dl_{v['id']}_{i}",
+                            key=f"dl_{video['id']}_{i}",
                         )
                     elif transcript_key in st.session_state:
                         st.error("N/A")
